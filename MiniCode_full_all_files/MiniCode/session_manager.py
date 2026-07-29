@@ -1,5 +1,6 @@
 """统一会话管理 —— 跨 Agent 上下文共享 + SQLite 持久化。"""
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import json
@@ -70,6 +71,19 @@ class Session:
         summary_budget = max(0, max_chars - kept_chars)
         self.summary = combined[-summary_budget:] if summary_budget else ""
 
+    def clone(self) -> "Session":
+        return deepcopy(self)
+
+    def restore_from(self, snapshot: "Session"):
+        self.session_id = snapshot.session_id
+        self.user_id = snapshot.user_id
+        self.created_at = snapshot.created_at
+        self.messages = deepcopy(snapshot.messages)
+        self.agent_history = list(snapshot.agent_history)
+        self.summary = snapshot.summary
+        self.last_result = deepcopy(snapshot.last_result)
+        self.max_context_tokens = snapshot.max_context_tokens
+
     def get_context_for(self, agent: str) -> str:
         ctx = f"Session: {self.session_id}\n"
         ctx += f"历史 Agent: {' → '.join(self.agent_history)}\n"
@@ -90,10 +104,10 @@ class Session:
             "session_id": self.session_id,
             "user_id": self.user_id,
             "created_at": self.created_at,
-            "messages": self.messages[-20:],
-            "agent_history": self.agent_history,
+            "messages": deepcopy(self.messages[-20:]),
+            "agent_history": list(self.agent_history),
             "summary": self.summary,
-            "last_result": self.last_result,
+            "last_result": deepcopy(self.last_result),
             "max_context_tokens": self.max_context_tokens,
         }
 
