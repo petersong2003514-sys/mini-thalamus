@@ -1,4 +1,4 @@
-﻿# Secrets: never commit runtime credentials.
+# Secrets: never commit runtime credentials.
 .env
 .env.*
 **/.env
@@ -40,4 +40,3 @@ Thumbs.db
 MiniCode_full_all_files/MiniCode/-
 MiniCode_full_all_files/MiniCode/{agentName}
 MiniCode_full_all_files/MiniCode/🎓
-
