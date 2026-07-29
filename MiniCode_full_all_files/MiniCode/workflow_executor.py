@@ -17,6 +17,7 @@ class WorkflowExecutor:
         original_query: str,
         context: dict = None,
         approved_call_ids=None,
+        context_provider=None,
     ) -> dict:
         approved = set(approved_call_ids or [])
         base_context = dict(context or {})
@@ -115,6 +116,12 @@ class WorkflowExecutor:
                 run_context["previous_result"] = results[
                     route_call.depends_on[-1]
                 ]
+
+            if context_provider is not None:
+                provided = context_provider(route_call, results)
+                if not isinstance(provided, dict):
+                    raise TypeError("context_provider must return a dict")
+                run_context.update(provided)
 
             started = time.perf_counter()
             attempt = 0

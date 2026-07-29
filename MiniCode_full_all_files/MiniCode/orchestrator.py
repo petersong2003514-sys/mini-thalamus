@@ -2,6 +2,7 @@
 
 import os
 
+from base_agent import BaseAgent
 from config import ALLOW_LOCAL_EXECUTION, ROUTER_AGENTS, SANDBOX_USE_DOCKER
 from route_schema import RouteDecision
 from router import Router
@@ -39,21 +40,23 @@ class Orchestrator:
         runtime=None,
         router: Router = None,
         execution_policy=None,
+        memory_service=None,
     ):
         self.agents = agents or {}
         self.registry = registry or getattr(runtime, "registry", None)
         self.runtime = runtime or _AgentMapRuntime(self.agents)
         self.router = router or Router(registry=self.registry)
-        self.session_mgr = session_mgr or SessionManager()
+        from memory_service import get_memory_service
+
+        self.memory_service = memory_service or get_memory_service()
+        self.session_mgr = session_mgr or self.memory_service.sessions
         self.execution_policy = execution_policy or ExecutionPolicy(
             workspace_root=os.path.dirname(os.path.abspath(__file__)),
             local_execution_enabled=ALLOW_LOCAL_EXECUTION,
             docker_backend_enabled=SANDBOX_USE_DOCKER,
         )
         self.workflow_executor = WorkflowExecutor(self.runtime)
-        from memory_store import get_store
-
-        self.memory = get_store()
+        self.memory = self.memory_service.store
 
     def process(
         self,
@@ -62,89 +65,181 @@ class Orchestrator:
         session_id: str = None,
         approved_call_ids=None,
     ) -> dict:
-        session = self.session_mgr.get_or_create(user_id, session_id)
-        session.add_user_message(user_message)
+        session = self.memory_service.resolve_session(user_id, session_id)
         sid = session.session_id
+        turn = self.memory_service.start_turn(session, user_message)
+        try:
+            files = self.memory.get_files(sid)
+            file_context = None
+            if files:
+                file_context = {
+                    "has_files": True,
+                    "file_names": files,
+                    "session_id": sid,
+                }
+            decision = self.router.route_decision(
+                user_message,
+                session_context=session.get_context_for("router"),
+                file_context=file_context,
+            )
+            decision.apply_policy(self._resolve_policy)
 
-        files = self.memory.get_files(sid)
-        file_context = None
-        if files:
-            file_context = {
-                "has_files": True,
-                "file_names": files,
-                "session_id": sid,
+            route_trace = {
+                "step": "route",
+                "trace_id": decision.trace_id,
+                "mode": decision.mode,
+                "method": decision.method,
+                "confidence": decision.overall_confidence,
+                "reason": decision.reason,
+                "candidates": [
+                    item.to_dict()
+                    for item in decision.candidates
+                ],
             }
-        decision = self.router.route_decision(
-            user_message,
-            session_context=session.get_context_for("router"),
-            file_context=file_context,
-        )
-        decision.apply_policy(self._resolve_policy)
+            if not decision.calls:
+                answer = self._general_reply(user_message, session)
+                self.memory_service.complete_turn(
+                    session,
+                    turn.turn_id,
+                    answer=answer,
+                    agent_id=FALLBACK_AGENT,
+                    status="success",
+                    result={"summary": answer[:300]},
+                )
+                return {
+                    "status": "success",
+                    "answer": answer,
+                    "agent_used": FALLBACK_AGENT,
+                    "trace": [route_trace],
+                    "session_id": sid,
+                    "route_decision": decision.to_dict(),
+                }
 
-        route_trace = {
-            "step": "route",
-            "trace_id": decision.trace_id,
-            "mode": decision.mode,
-            "method": decision.method,
-            "confidence": decision.overall_confidence,
-            "reason": decision.reason,
-            "candidates": [item.to_dict() for item in decision.candidates],
-        }
-        if not decision.calls:
-            answer = self._general_reply(user_message, session)
-            session.add_assistant_message(answer)
-            self.memory.record_turn(sid, user_message, answer, FALLBACK_AGENT)
-            return {
-                "status": "success",
-                "answer": answer,
-                "agent_used": FALLBACK_AGENT,
-                "trace": [route_trace],
-                "session_id": sid,
-                "route_decision": decision.to_dict(),
-            }
+            def context_provider(route_call, workflow_results):
+                capabilities = dict(BaseAgent.capabilities)
+                if self.registry is not None:
+                    if hasattr(self.registry, "get_capabilities"):
+                        capabilities.update(
+                            self.registry.get_capabilities(
+                                route_call.function.name
+                            )
+                            or {}
+                        )
+                    else:
+                        entry = self.registry.get(route_call.function.name)
+                        if entry:
+                            capabilities.update(
+                                entry.get("meta", {}).get(
+                                    "capabilities",
+                                    {},
+                                )
+                            )
+                workflow_inputs = {
+                    ref: WorkflowExecutor._resolve_ref(
+                        ref,
+                        workflow_results,
+                    )
+                    for ref in route_call.function.arguments.get(
+                        "input_refs",
+                        [],
+                    )
+                }
+                previous_result = None
+                if route_call.depends_on:
+                    previous_result = workflow_results.get(
+                        route_call.depends_on[-1]
+                    )
+                memory_context = self.memory_service.build_context(
+                    user_id=user_id,
+                    session_id=sid,
+                    agent_id=route_call.function.name,
+                    capabilities=capabilities,
+                    current_query=route_call.function.arguments[
+                        "instruction"
+                    ],
+                    previous_result=previous_result,
+                    workflow_inputs=workflow_inputs,
+                )
+                return {"memory": memory_context.to_dict()}
 
-        execution = self.workflow_executor.execute(
-            decision,
-            original_query=user_message,
-            context={
-                "session_id": sid,
-                "files": files,
-                "memory": self.memory.build_agent_context(
-                    sid,
-                    decision.calls[0].function.name,
-                    user_message,
-                    as_struct=True,
-                ).to_dict(),
-            },
-            approved_call_ids=approved_call_ids,
-        )
-        execution_trace = [route_trace, *execution.get("trace", [])]
-        if execution["status"] == "checkpoint":
+            execution = self.workflow_executor.execute(
+                decision,
+                original_query=user_message,
+                context={
+                    "session_id": sid,
+                    "files": files,
+                },
+                approved_call_ids=approved_call_ids,
+                context_provider=context_provider,
+            )
+            execution_trace = [route_trace, *execution.get("trace", [])]
+            if execution["status"] == "checkpoint":
+                pending_agent = execution["pending_call"]["function"]["name"]
+                self.memory_service.complete_turn(
+                    session,
+                    turn.turn_id,
+                    answer=execution.get("answer", "等待用户批准"),
+                    agent_id=pending_agent,
+                    status="checkpoint",
+                    result=execution,
+                )
+                return {
+                    **execution,
+                    "agent_used": pending_agent,
+                    "trace": execution_trace,
+                    "session_id": sid,
+                }
+
+            answer = (
+                execution.get("answer")
+                or execution.get("summary")
+                or "处理完成"
+            )
+            executed_agents = [
+                item["agent_id"]
+                for item in execution.get("trace", [])
+                if item.get("status") != "skipped"
+            ]
+            agent_used = (
+                executed_agents[-1]
+                if executed_agents
+                else FALLBACK_AGENT
+            )
+            turn_status = (
+                "success"
+                if execution["status"] == "success"
+                else "error"
+            )
+            self.memory_service.complete_turn(
+                session,
+                turn.turn_id,
+                answer=answer,
+                agent_id=agent_used,
+                status=turn_status,
+                result=execution,
+            )
             return {
                 **execution,
-                "agent_used": execution["pending_call"]["function"]["name"],
+                "answer": answer,
+                "agent_used": agent_used,
                 "trace": execution_trace,
                 "session_id": sid,
             }
-
-        answer = execution.get("answer") or execution.get("summary") or "处理完成"
-        executed_agents = [
-            item["agent_id"]
-            for item in execution.get("trace", [])
-            if item.get("status") != "skipped"
-        ]
-        agent_used = executed_agents[-1] if executed_agents else FALLBACK_AGENT
-        session.add_agent_trace(agent_used, execution["status"], execution.get("summary", ""))
-        session.set_last_result(execution)
-        session.add_assistant_message(answer)
-        self.memory.record_turn(sid, user_message, answer, agent_used)
-        return {
-            **execution,
-            "answer": answer,
-            "agent_used": agent_used,
-            "trace": execution_trace,
-            "session_id": sid,
-        }
+        except Exception as exc:
+            current = self.memory.get_turn(turn.turn_id)
+            if current is not None and current.status == "running":
+                try:
+                    self.memory_service.complete_turn(
+                        session,
+                        turn.turn_id,
+                        answer=str(exc),
+                        agent_id=FALLBACK_AGENT,
+                        status="error",
+                        result={"summary": str(exc)[:300]},
+                    )
+                except Exception:
+                    pass
+            raise
 
     def _resolve_policy(self, route_call):
         evaluator = getattr(
