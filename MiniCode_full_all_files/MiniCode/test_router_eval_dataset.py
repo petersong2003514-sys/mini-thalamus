@@ -103,6 +103,21 @@ class RouterEvalDatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(RouterEvalDatasetError, "expected 2"):
             load_cases(self.path, self.agents, expected_count=2)
 
+    def test_loader_accepts_call_free_fallback_contract(self):
+        value = self._case("fallback-1", "general")
+        value["expected"] = {
+            "mode": "fallback",
+            "calls": [],
+            "acceptable_agents": [],
+        }
+        value["expected_stage"] = "fallback"
+        self._write([value])
+
+        cases = load_cases(self.path, self.agents, expected_count=1)
+
+        self.assertEqual(cases[0].expected_mode, "fallback")
+        self.assertEqual(cases[0].expected_calls, ())
+
     def test_fingerprint_is_order_stable_but_content_sensitive(self):
         first = self._case("first")
         second = self._case("second", "code")
@@ -131,6 +146,8 @@ class RouterEvalDatasetTests(unittest.TestCase):
             "url_fetch", "vision", "websearch",
         }
         path = os.path.join(os.path.dirname(__file__), "evals", "router_cases.jsonl")
+        with open(path, encoding="utf-8") as handle:
+            self.assertNotIn("\ufffd", handle.read())
         cases = load_cases(path, agents)
         distribution = Counter(case.tags[0] for case in cases)
         self.assertEqual(distribution, {
@@ -142,7 +159,11 @@ class RouterEvalDatasetTests(unittest.TestCase):
             "fallback": 10,
         })
         covered = {call.agent_id for case in cases for call in case.expected_calls}
-        self.assertEqual(covered, agents)
+        self.assertEqual(covered, agents - {"general"})
+        self.assertEqual(
+            sum(case.expected_mode == "fallback" for case in cases),
+            10,
+        )
 
 
 if __name__ == "__main__":

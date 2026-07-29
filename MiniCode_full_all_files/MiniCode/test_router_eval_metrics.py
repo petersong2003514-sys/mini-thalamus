@@ -9,6 +9,27 @@ from router_eval_metrics import (
 
 
 class RouterEvalMetricTests(unittest.TestCase):
+    def test_call_free_fallback_is_scored_by_mode_and_method(self):
+        case = RouterEvalCase(
+            case_id="fallback-1",
+            query="你好",
+            session_context="",
+            file_context={},
+            expected_mode="fallback",
+            expected_calls=(),
+            acceptable_agents=(),
+            expected_stage="fallback",
+            difficulty="easy",
+            tags=("fallback",),
+        )
+        score = score_case(case, {
+            "mode": "fallback", "calls": [], "candidates": [],
+            "method": "fallback", "schema_valid": True,
+        })
+        metrics = aggregate_scores([score])
+        self.assertTrue(score["fallback_correct"])
+        self.assertEqual(metrics["fallback_accuracy"], 1.0)
+
     def setUp(self):
         self.single_case = RouterEvalCase(
             case_id="single",

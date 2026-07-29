@@ -102,15 +102,22 @@ def score_case(case: RouterEvalCase, prediction: dict) -> dict:
     }
     input_refs_exact = expected_refs == predicted_refs
 
-    expected_primary = expected_agents[0]
+    expected_primary = expected_agents[0] if expected_agents else None
     predicted_primary = predicted_agents[0] if predicted_agents else None
-    allowed = {expected_primary, *case.acceptable_agents}
+    allowed = ({expected_primary} if expected_primary else set()) | set(case.acceptable_agents)
     single_correct = (
         predicted_primary in allowed
         if case.expected_mode == "single"
         else None
     )
     mode_correct = prediction.get("mode") == case.expected_mode
+    fallback_correct = (
+        mode_correct
+        and prediction.get("method") == "fallback"
+        and not predicted_calls
+        if case.expected_mode == "fallback"
+        else None
+    )
     workflow_exact = (
         mode_correct
         and sequence_exact
@@ -143,6 +150,7 @@ def score_case(case: RouterEvalCase, prediction: dict) -> dict:
         "edge_f1": edge_f1,
         "input_refs_exact": input_refs_exact,
         "workflow_exact": workflow_exact,
+        "fallback_correct": fallback_correct,
         "top3_hit": top3_hit,
         "schema_valid": bool(prediction.get("schema_valid", False)),
         "latency_ms": float(prediction.get("latency_ms", 0.0) or 0.0),
@@ -239,7 +247,8 @@ def aggregate_scores(scored_cases: list[dict]) -> dict:
     for score in scores:
         dimensions["difficulty"][score["difficulty"]].append(score)
         dimensions["expected_stage"][score["expected_stage"]].append(score)
-        dimensions["agent"][score["expected_primary_agent"]].append(score)
+        if score["expected_primary_agent"] is not None:
+            dimensions["agent"][score["expected_primary_agent"]].append(score)
         for tag in score["tags"]:
             dimensions["tag"][tag].append(score)
 
@@ -272,7 +281,9 @@ def aggregate_scores(scored_cases: list[dict]) -> dict:
             float(score["schema_valid"]) for score in scores
         ]),
         "fallback_accuracy": _average([
-            float(bool(score["single_correct"])) for score in fallback_cases
+            float(score["fallback_correct"])
+            for score in fallback_cases
+            if score["fallback_correct"] is not None
         ]),
         "method_distribution": dict(Counter(score["method"] for score in scores)),
         "latency_ms": {

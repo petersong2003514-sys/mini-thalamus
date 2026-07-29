@@ -18,7 +18,7 @@ CASE_FIELDS = {
 }
 EXPECTED_FIELDS = {"mode", "calls", "acceptable_agents"}
 CALL_FIELDS = {"agent_id", "depends_on", "input_refs"}
-VALID_MODES = {"single", "workflow"}
+VALID_MODES = {"single", "workflow", "fallback"}
 VALID_STAGES = {"rule", "semantic", "llm", "fallback"}
 VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
@@ -145,8 +145,8 @@ def _parse_case(value, line_number: int, registered_agents: set[str]):
     if mode not in VALID_MODES:
         raise RouterEvalDatasetError(f"case {case_id} has invalid mode {mode!r}")
     raw_calls = expected["calls"]
-    if not isinstance(raw_calls, list) or not raw_calls:
-        raise RouterEvalDatasetError(f"case {case_id} calls must be non-empty")
+    if not isinstance(raw_calls, list):
+        raise RouterEvalDatasetError(f"case {case_id} calls must be a list")
     if mode == "single" and len(raw_calls) != 1:
         raise RouterEvalDatasetError(
             f"case {case_id} single mode requires exactly one call"
@@ -154,6 +154,10 @@ def _parse_case(value, line_number: int, registered_agents: set[str]):
     if mode == "workflow" and len(raw_calls) < 2:
         raise RouterEvalDatasetError(
             f"case {case_id} workflow mode requires at least two calls"
+        )
+    if mode == "fallback" and raw_calls:
+        raise RouterEvalDatasetError(
+            f"case {case_id} fallback mode requires no calls"
         )
 
     calls = []

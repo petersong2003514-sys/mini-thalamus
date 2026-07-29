@@ -7,7 +7,7 @@ import os
 import time
 
 from agent_runtime import AgentRuntime
-from router import FALLBACK_AGENT, Router
+from router import _COMPOUND_PATTERN, FALLBACK_AGENT, Router
 from router_eval_dataset import dataset_fingerprint, load_cases
 from router_eval_metrics import aggregate_scores, evaluate_quality_gates, score_case
 from semantic_router import SemanticMatcher
@@ -15,6 +15,16 @@ from semantic_router import SemanticMatcher
 
 DEFAULT_CASES = os.path.join(os.path.dirname(__file__), "evals", "router_cases.jsonl")
 DEFAULT_RESULTS = os.path.join(os.path.dirname(__file__), "evals", "results")
+
+
+class UnavailableSemanticMatcher:
+    """Explicit no-op matcher for environments with an unsafe native runtime."""
+
+    def __init__(self, reason: str):
+        self.last_error = reason
+
+    def rank(self, query: str, agent_specs: dict, top_k: int = 3) -> list[dict]:
+        return []
 
 
 def normalize_decision(decision, latency_ms: float) -> dict:
@@ -142,6 +152,8 @@ def _rule_predictor(router):
     def predict(case):
         started = time.perf_counter()
         agent_id, _ = router._rule_match(case.query, case.file_context, specs)
+        if _COMPOUND_PATTERN.search(case.query):
+            agent_id = None
         latency = (time.perf_counter() - started) * 1000
         return {
             "mode": "single" if agent_id else None,
@@ -199,13 +211,22 @@ def main(argv=None):
     parser.add_argument("--cases", default=DEFAULT_CASES)
     parser.add_argument("--output-dir", default=DEFAULT_RESULTS)
     parser.add_argument("--live-llm", action="store_true")
+    parser.add_argument(
+        "--disable-semantic",
+        action="store_true",
+        help="record semantic routing as unavailable without importing its native runtime",
+    )
     args = parser.parse_args(argv)
 
     runtime = AgentRuntime()
     runtime.discover()
     registered = set(runtime.list_agent_ids(include_unavailable=True)) | {FALLBACK_AGENT}
     cases = load_cases(args.cases, registered)
-    matcher = SemanticMatcher()
+    matcher = (
+        UnavailableSemanticMatcher("native_runtime_disabled")
+        if args.disable_semantic
+        else SemanticMatcher()
+    )
     if args.layer == "rules":
         router = Router(registry=runtime.registry, semantic_matcher=matcher, llm_router=lambda **_: {})
         predictor = _rule_predictor(router)

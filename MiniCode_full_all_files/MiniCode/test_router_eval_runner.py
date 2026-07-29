@@ -3,8 +3,15 @@ import os
 import tempfile
 import unittest
 
-from router_eval import evaluate_cases, normalize_decision, write_report
+from router_eval import (
+    UnavailableSemanticMatcher,
+    _rule_predictor,
+    evaluate_cases,
+    normalize_decision,
+    write_report,
+)
 from router_eval_dataset import ExpectedCall, RouterEvalCase
+from router import Router
 
 
 def sample_case():
@@ -44,6 +51,23 @@ class FakeDecision:
 
 
 class RouterEvalRunnerTests(unittest.TestCase):
+    def test_rule_layer_respects_compound_intent_gate(self):
+        router = Router(
+            dynamic_agents={"nl2sql": {"intents": ["query_data"]}},
+            semantic_matcher=UnavailableSemanticMatcher("disabled"),
+            llm_router=lambda **_: {},
+        )
+        case = sample_case()
+        case = RouterEvalCase(
+            **{**case.__dict__, "query": "@nl2sql query -> analyze"}
+        )
+        self.assertEqual(_rule_predictor(router)(case)["method"], "no_rule")
+
+    def test_unavailable_matcher_never_loads_native_model(self):
+        matcher = UnavailableSemanticMatcher("native_runtime_crash")
+        self.assertEqual(matcher.rank("query", {"nl2sql": {}}, top_k=3), [])
+        self.assertEqual(matcher.last_error, "native_runtime_crash")
+
     def test_normalize_decision_preserves_contract_fields(self):
         prediction = normalize_decision(FakeDecision(), latency_ms=12.5)
         self.assertEqual(prediction["calls"][0]["agent_id"], "nl2sql")
