@@ -167,7 +167,7 @@ def _semantic_predictor(router, matcher):
         candidates = matcher.rank(case.query, specs, top_k=3)
         latency = (time.perf_counter() - started) * 1000
         best = candidates[0]["agent_id"] if candidates else None
-        error = type(matcher.last_error).__name__ if not isinstance(matcher.last_error, str) else None
+        error = "SemanticUnavailable" if not candidates and matcher.last_error else None
         return {
             "mode": "single" if best else None,
             "calls": ([{"call_id": "step_1", "agent_id": best,

@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import Counter
 
 from router_eval_dataset import (
     RouterEvalDatasetError,
@@ -122,6 +123,26 @@ class RouterEvalDatasetTests(unittest.TestCase):
             dataset_fingerprint(forward),
             dataset_fingerprint(changed_cases),
         )
+
+    def test_committed_benchmark_has_approved_distribution(self):
+        agents = {
+            "api_caller", "browser", "code", "data_analyst", "deep_research",
+            "docparse", "general", "nl2sql", "rag", "report_writer", "shell",
+            "url_fetch", "vision", "websearch",
+        }
+        path = os.path.join(os.path.dirname(__file__), "evals", "router_cases.jsonl")
+        cases = load_cases(path, agents)
+        distribution = Counter(case.tags[0] for case in cases)
+        self.assertEqual(distribution, {
+            "ordinary_single": 90,
+            "ambiguous": 30,
+            "confusable": 30,
+            "multi_intent": 30,
+            "file_context": 10,
+            "fallback": 10,
+        })
+        covered = {call.agent_id for case in cases for call in case.expected_calls}
+        self.assertEqual(covered, agents)
 
 
 if __name__ == "__main__":
