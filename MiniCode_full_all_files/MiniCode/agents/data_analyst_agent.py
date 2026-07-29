@@ -148,9 +148,9 @@ class DataAnalystAgent:
         files = ctx.get("files", [])
         sid = ctx.get("session_id", "default")
 
-        # ── 跨轮持久化缓存（MemoryStore）──
-        from memory_store import get_store
-        store = get_store()
+        # ── 跨轮持久化 session 状态（不写入长期知识）──
+        from memory_service import get_memory_service
+        memory = get_memory_service()
 
         # ── 有新文件 → 解析并缓存路径 ──
         if files:
@@ -160,11 +160,11 @@ class DataAnalystAgent:
                 return {"status": "error",
                         "answer": f"文件解析失败: {profile['error']}\n支持 CSV、Excel(.xlsx/.xls) 格式。",
                         "data": {}}
-            # 持久化数据集路径到 MemoryStore
-            store.set_long_term(f"dataset:{sid}", {"path": csv_path, "name": profile.get("name", "")})
+            # 持久化数据集路径到 session state
+            memory.set_session_state(sid, "dataset", {"path": csv_path, "name": profile.get("name", "")})
         else:
-            # 从 MemoryStore 恢复
-            cached = store.get_long_term(f"dataset:{sid}")
+            # 从 session state 恢复
+            cached = memory.get_session_state(sid, "dataset")
             if cached and isinstance(cached, dict):
                 csv_path = cached.get("path", "")
             else:

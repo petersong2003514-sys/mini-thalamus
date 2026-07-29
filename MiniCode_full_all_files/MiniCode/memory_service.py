@@ -99,11 +99,68 @@ class MemoryService:
                     tags=tags,
                     conn=conn,
                 )
+                self._promote_candidates(
+                    completed,
+                    result,
+                    agent_id,
+                    conn,
+                )
                 self.sessions.save(session, conn=conn)
             return completed
         except Exception:
             session.restore_from(snapshot)
             raise
+
+    def _promote_candidates(self, completed, result, agent_id, conn):
+        if completed.status != "success" or not isinstance(result, dict):
+            return
+        metadata = result.get("metadata", {})
+        candidates = (
+            metadata.get("memory_candidates", [])
+            if isinstance(metadata, dict)
+            else []
+        )
+        if not isinstance(candidates, list):
+            return
+        normalized_query = "".join(completed.query.lower().split())
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            namespace = candidate.get("namespace")
+            memory_key = candidate.get("memory_key")
+            gist = candidate.get("gist")
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (namespace, memory_key, gist)
+            ):
+                continue
+            if namespace == "preference":
+                evidence = candidate.get("evidence", "")
+                normalized_evidence = (
+                    "".join(evidence.lower().split())
+                    if isinstance(evidence, str)
+                    else ""
+                )
+                if (
+                    not normalized_evidence
+                    or normalized_evidence not in normalized_query
+                ):
+                    continue
+                activate = True
+            elif namespace == "business_fact":
+                activate = False
+            else:
+                continue
+            self.store.promote_memory(
+                user_id=completed.user_id,
+                source_turn_id=completed.turn_id,
+                namespace=namespace,
+                memory_key=memory_key,
+                gist=gist,
+                source_agent=agent_id,
+                activate=activate,
+                conn=conn,
+            )
 
     def build_context(
         self,
