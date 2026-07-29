@@ -5,9 +5,12 @@ import unittest
 
 from router_eval import (
     UnavailableSemanticMatcher,
+    skipped_report,
     _rule_predictor,
     evaluate_cases,
+    expand_layers,
     normalize_decision,
+    select_llm_cases,
     write_report,
 )
 from router_eval_dataset import ExpectedCall, RouterEvalCase
@@ -51,6 +54,39 @@ class FakeDecision:
 
 
 class RouterEvalRunnerTests(unittest.TestCase):
+    def test_all_layer_expands_in_cost_order(self):
+        self.assertEqual(
+            expand_layers("all"),
+            ["rules", "semantic", "llm", "cascade"],
+        )
+
+    def test_llm_layer_uses_fixed_fifty_hard_cases(self):
+        agents = {
+            "api_caller", "browser", "code", "data_analyst", "deep_research",
+            "docparse", "general", "nl2sql", "rag", "report_writer", "shell",
+            "url_fetch", "vision", "websearch",
+        }
+        from router_eval_dataset import load_cases
+        path = os.path.join(os.path.dirname(__file__), "evals", "router_cases.jsonl")
+        selected = select_llm_cases(load_cases(path, agents))
+        self.assertEqual(len(selected), 50)
+        self.assertTrue(all(case.difficulty == "hard" for case in selected))
+
+    def test_skipped_layer_has_null_metrics_and_skipped_gates(self):
+        report = skipped_report(
+            layer="semantic-offline",
+            dataset_hash="abc",
+            case_count=137,
+            reason="native_runtime_disabled",
+        )
+        self.assertEqual(report["status"], "skipped")
+        self.assertIsNone(report["metrics"]["semantic_top3_recall"])
+        self.assertTrue(all(
+            result["status"] == "skipped"
+            for name, result in report["quality_gates"].items()
+            if name != "all_available_passed"
+        ))
+
     def test_rule_layer_respects_compound_intent_gate(self):
         router = Router(
             dynamic_agents={"nl2sql": {"intents": ["query_data"]}},
@@ -86,6 +122,7 @@ class RouterEvalRunnerTests(unittest.TestCase):
             dataset_hash="abc",
         )
         self.assertEqual(report["metrics"]["error_count"], 1)
+        self.assertIn("python_version", report["environment"])
         self.assertEqual(report["predictions"][0]["error"], "RuntimeError")
         self.assertNotIn("secret token", json.dumps(report))
 

@@ -4,17 +4,42 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import platform
+import subprocess
+import sys
 import time
+import uuid
 
 from agent_runtime import AgentRuntime
+from config import get_llm_config
 from router import _COMPOUND_PATTERN, FALLBACK_AGENT, Router
 from router_eval_dataset import dataset_fingerprint, load_cases
 from router_eval_metrics import aggregate_scores, evaluate_quality_gates, score_case
+from route_schema import RouteDecision
 from semantic_router import SemanticMatcher
 
 
 DEFAULT_CASES = os.path.join(os.path.dirname(__file__), "evals", "router_cases.jsonl")
 DEFAULT_RESULTS = os.path.join(os.path.dirname(__file__), "evals", "results")
+
+
+def _environment_metadata() -> dict:
+    return {
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+    }
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.dirname(__file__),
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 class UnavailableSemanticMatcher:
@@ -25,6 +50,17 @@ class UnavailableSemanticMatcher:
 
     def rank(self, query: str, agent_specs: dict, top_k: int = 3) -> list[dict]:
         return []
+
+
+def select_llm_cases(cases) -> list:
+    hard = [case for case in cases if case.difficulty == "hard"]
+    preferred = [case for case in hard if case.expected_stage == "llm"]
+    remaining = [case for case in hard if case.expected_stage != "llm"]
+    return (preferred + remaining)[:50]
+
+
+def expand_layers(layer: str) -> list[str]:
+    return ["rules", "semantic", "llm", "cascade"] if layer == "all" else [layer]
 
 
 def normalize_decision(decision, latency_ms: float) -> dict:
@@ -88,9 +124,11 @@ def evaluate_cases(cases, *, layer: str, predictor, dataset_hash: str) -> dict:
     metrics = aggregate_scores(scores)
     return {
         "schema_version": 1,
+        "status": "completed",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "layer": layer,
         "dataset_fingerprint": dataset_hash,
+        "environment": _environment_metadata(),
         "metrics": metrics,
         "quality_gates": evaluate_quality_gates(metrics),
         "predictions": predictions,
@@ -98,6 +136,24 @@ def evaluate_cases(cases, *, layer: str, predictor, dataset_hash: str) -> dict:
             {key: value for key, value in score.items() if not key.startswith("_")}
             for score in scores
         ],
+    }
+
+
+def skipped_report(*, layer: str, dataset_hash: str, case_count: int, reason: str) -> dict:
+    metrics = aggregate_scores([])
+    metrics["case_count"] = case_count
+    return {
+        "schema_version": 1,
+        "status": "skipped",
+        "skip_reason": reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "layer": layer,
+        "dataset_fingerprint": dataset_hash,
+        "environment": _environment_metadata(),
+        "metrics": metrics,
+        "quality_gates": evaluate_quality_gates(metrics),
+        "predictions": [],
+        "scores": [],
     }
 
 
@@ -205,9 +261,32 @@ def _cascade_predictor(router):
     return predict
 
 
+def _llm_predictor(router):
+    specs = router._agent_specs()
+
+    def predict(case):
+        started = time.perf_counter()
+        candidates = router._lexical_candidates(case.query, specs)
+        payload = router._call_llm_router(
+            query=case.query,
+            context=case.session_context,
+            file_context=case.file_context,
+            candidates=candidates,
+            specs=specs,
+        )
+        payload = dict(payload)
+        payload["method"] = "llm"
+        payload["trace_id"] = uuid.uuid4().hex
+        if not payload.get("candidates"):
+            payload["candidates"] = candidates
+        decision = RouteDecision.from_dict(payload, agent_specs=specs)
+        return normalize_decision(decision, (time.perf_counter() - started) * 1000)
+    return predict
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--layer", choices=("rules", "semantic", "cascade"), default="rules")
+    parser.add_argument("--layer", choices=("rules", "semantic", "llm", "cascade", "all"), default="rules")
     parser.add_argument("--cases", default=DEFAULT_CASES)
     parser.add_argument("--output-dir", default=DEFAULT_RESULTS)
     parser.add_argument("--live-llm", action="store_true")
@@ -218,10 +297,19 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
+    if args.layer == "all":
+        common = ["--cases", args.cases, "--output-dir", args.output_dir]
+        if args.live_llm:
+            common.append("--live-llm")
+        if args.disable_semantic:
+            common.append("--disable-semantic")
+        return max(main(["--layer", layer, *common]) for layer in expand_layers("all"))
+
     runtime = AgentRuntime()
     runtime.discover()
     registered = set(runtime.list_agent_ids(include_unavailable=True)) | {FALLBACK_AGENT}
     cases = load_cases(args.cases, registered)
+    llm_key_available = bool(get_llm_config().get("api_key"))
     matcher = (
         UnavailableSemanticMatcher("native_runtime_disabled")
         if args.disable_semantic
@@ -233,16 +321,75 @@ def main(argv=None):
     elif args.layer == "semantic":
         router = Router(registry=runtime.registry, semantic_matcher=matcher, llm_router=lambda **_: {})
         predictor = _semantic_predictor(router, matcher)
-    else:
+    elif args.layer == "cascade":
         llm_override = None if args.live_llm else (lambda **_: {})
         router = Router(registry=runtime.registry, semantic_matcher=matcher, llm_router=llm_override)
         predictor = _cascade_predictor(router)
-    report = evaluate_cases(
-        cases,
-        layer=args.layer + ("-live" if args.live_llm else "-offline"),
-        predictor=predictor,
-        dataset_hash=dataset_fingerprint(cases),
-    )
+    else:
+        llm_override = None if args.live_llm and llm_key_available else (lambda **_: {})
+        router = Router(
+            registry=runtime.registry,
+            semantic_matcher=matcher,
+            llm_router=llm_override,
+        )
+        predictor = _llm_predictor(router)
+    layer_name = args.layer + ("-live" if args.live_llm else "-offline")
+    fingerprint = dataset_fingerprint(cases)
+    live_unavailable = args.live_llm and not llm_key_available
+    llm_disabled = args.layer == "llm" and not args.live_llm
+    if args.layer == "semantic" and args.disable_semantic:
+        eligible = [case for case in cases if case.expected_stage == "semantic"]
+        report = skipped_report(
+            layer=layer_name,
+            dataset_hash=fingerprint,
+            case_count=len(eligible),
+            reason="native_runtime_disabled",
+        )
+    elif live_unavailable or llm_disabled:
+        eligible = select_llm_cases(cases) if args.layer == "llm" else cases
+        report = skipped_report(
+            layer=layer_name,
+            dataset_hash=fingerprint,
+            case_count=len(eligible),
+            reason=("missing_llm_credential" if live_unavailable else "live_llm_not_enabled"),
+        )
+    else:
+        eligible = (
+            [case for case in cases if case.expected_stage == "semantic"]
+            if args.layer == "semantic"
+            else (select_llm_cases(cases) if args.layer == "llm" else cases)
+        )
+        report = evaluate_cases(
+            eligible,
+            layer=layer_name,
+            predictor=predictor,
+            dataset_hash=fingerprint,
+        )
+    report["reproducibility"] = {
+        "git_commit": _git_commit(),
+        "registered_agents": sorted(registered),
+        "semantic_model": getattr(matcher, "model_name", None),
+        "router_thresholds": {
+            "semantic": router.semantic_threshold,
+            "semantic_margin": router.semantic_margin,
+            "semantic_fallback": router.semantic_fallback_threshold,
+            "top_k": router.top_k,
+        },
+        "live_llm_requested": bool(args.live_llm),
+        "llm_credential_available": llm_key_available,
+        "semantic_disabled": bool(args.disable_semantic),
+        "eligible_case_count": len(eligible),
+        "token_usage": None,
+        "estimated_cost": None,
+    }
+    report["component_status"] = {
+        "rules": "available",
+        "semantic": "unavailable" if args.disable_semantic else "available",
+        "llm": (
+            "unavailable" if live_unavailable
+            else ("available" if args.live_llm else "not_run")
+        ),
+    }
     paths = write_report(report, args.output_dir)
     print(json.dumps({"json": paths[0], "markdown": paths[1], "metrics": report["metrics"]}, ensure_ascii=False))
     return 0

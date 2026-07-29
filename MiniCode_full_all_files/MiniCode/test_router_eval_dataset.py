@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from collections import Counter
+from difflib import SequenceMatcher
 
 from router_eval_dataset import (
     RouterEvalDatasetError,
@@ -149,6 +150,7 @@ class RouterEvalDatasetTests(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             self.assertNotIn("\ufffd", handle.read())
         cases = load_cases(path, agents)
+        self.assertEqual(len({case.query for case in cases}), 200)
         distribution = Counter(case.tags[0] for case in cases)
         self.assertEqual(distribution, {
             "ordinary_single": 90,
@@ -164,6 +166,22 @@ class RouterEvalDatasetTests(unittest.TestCase):
             sum(case.expected_mode == "fallback" for case in cases),
             10,
         )
+        self.assertTrue(all(
+            not case.acceptable_agents
+            for case in cases
+            if "confusable" in case.tags
+        ))
+        substantive = [
+            case for case in cases
+            if not ({"file_context", "fallback"} & set(case.tags))
+        ]
+        near_duplicates = [
+            (left.case_id, right.case_id)
+            for index, left in enumerate(substantive)
+            for right in substantive[index + 1:]
+            if SequenceMatcher(None, left.query, right.query).ratio() >= 0.97
+        ]
+        self.assertEqual(near_duplicates, [])
 
 
 if __name__ == "__main__":

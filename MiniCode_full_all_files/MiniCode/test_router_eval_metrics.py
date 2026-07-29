@@ -9,6 +9,18 @@ from router_eval_metrics import (
 
 
 class RouterEvalMetricTests(unittest.TestCase):
+    def test_single_prediction_rejects_workflow_with_correct_first_agent(self):
+        case = self.single_case
+        score = score_case(case, {
+            "mode": "workflow",
+            "calls": [
+                {"call_id": "step_1", "agent_id": "data_analyst", "depends_on": [], "input_refs": []},
+                {"call_id": "step_2", "agent_id": "code", "depends_on": [], "input_refs": []},
+            ],
+            "method": "llm", "schema_valid": True,
+        })
+        self.assertFalse(score["single_correct"])
+
     def test_call_free_fallback_is_scored_by_mode_and_method(self):
         case = RouterEvalCase(
             case_id="fallback-1",
@@ -122,6 +134,22 @@ class RouterEvalMetricTests(unittest.TestCase):
         self.assertFalse(score["workflow_exact"])
         self.assertEqual(score["edge_recall"], 0.5)
         self.assertFalse(score["input_refs_exact"])
+
+    def test_workflow_graph_scoring_is_independent_of_call_id_names(self):
+        prediction = {
+            "mode": "workflow",
+            "method": "llm",
+            "schema_valid": True,
+            "calls": [
+                {"call_id": "fetch", "agent_id": "nl2sql", "depends_on": [], "input_refs": []},
+                {"call_id": "chart", "agent_id": "code", "depends_on": ["fetch"], "input_refs": ["fetch.data.structured"]},
+                {"call_id": "write", "agent_id": "report_writer", "depends_on": ["chart"], "input_refs": ["chart.data.structured"]},
+            ],
+        }
+        score = score_case(self.workflow_case, prediction)
+        self.assertEqual(score["edge_recall"], 1.0)
+        self.assertTrue(score["input_refs_exact"])
+        self.assertTrue(score["workflow_exact"])
 
     def test_aggregate_scores_known_rates_and_slices(self):
         correct = score_case(

@@ -59,6 +59,10 @@ def _candidate_ids(value) -> list[str]:
 def score_case(case: RouterEvalCase, prediction: dict) -> dict:
     raw_calls = prediction.get("calls", [])
     predicted_calls = [call for call in raw_calls if isinstance(call, dict)]
+    call_id_map = {
+        call.get("call_id", f"step_{index}"): f"step_{index}"
+        for index, call in enumerate(predicted_calls, start=1)
+    }
     expected_agents = [call.agent_id for call in case.expected_calls]
     predicted_agents = [
         call.get("agent_id", "")
@@ -77,7 +81,7 @@ def score_case(case: RouterEvalCase, prediction: dict) -> dict:
         for dependency in call.depends_on
     }
     predicted_edges = {
-        (dependency, call.get("call_id", f"step_{index}"))
+        (call_id_map.get(dependency, dependency), f"step_{index}")
         for index, call in enumerate(predicted_calls, start=1)
         for dependency in call.get("depends_on", [])
         if isinstance(dependency, str)
@@ -95,7 +99,11 @@ def score_case(case: RouterEvalCase, prediction: dict) -> dict:
         for ref in call.input_refs
     }
     predicted_refs = {
-        (call.get("call_id", f"step_{index}"), ref)
+        (
+            f"step_{index}",
+            call_id_map.get(ref.partition(".")[0], ref.partition(".")[0])
+            + ("." + ref.partition(".")[2] if ref.partition(".")[1] else ""),
+        )
         for index, call in enumerate(predicted_calls, start=1)
         for ref in call.get("input_refs", [])
         if isinstance(ref, str)
@@ -106,7 +114,9 @@ def score_case(case: RouterEvalCase, prediction: dict) -> dict:
     predicted_primary = predicted_agents[0] if predicted_agents else None
     allowed = ({expected_primary} if expected_primary else set()) | set(case.acceptable_agents)
     single_correct = (
-        predicted_primary in allowed
+        prediction.get("mode") == "single"
+        and len(predicted_calls) == 1
+        and predicted_primary in allowed
         if case.expected_mode == "single"
         else None
     )
