@@ -1,0 +1,38 @@
+{
+  "summary": {
+    "total": 4,
+    "execution_success": 4,
+    "result_match": 4,
+    "pattern_match": 3,
+    "execution_accuracy": 1.0,
+    "result_accuracy": 1.0,
+    "pattern_accuracy": 0.75,
+    "avg_rounds": 1.0,
+    "avg_time_ms": 3254.0,
+    "avg_tokens": 2780.0
+  },
+  "by_difficulty": {
+    "medium": {
+      "count": 1,
+      "exec_ok": 1,
+      "match_ok": 1,
+      "pattern_ok": 1,
+      "exec_accuracy": 1.0,
+      "match_accuracy": 1.0,
+      "pattern_accuracy": 1.0
+    },
+    "hard": {
+      "count": 3,
+      "exec_ok": 3,
+      "match_ok": 3,
+      "pattern_ok": 2,
+      "exec_accuracy": 1.0,
+      "match_accuracy": 1.0,
+      "pattern_accuracy": 0.667
+    }
+  },
+  "by_stop_reason": {
+    "success": 4
+  },
+  "failures": []
+}

@@ -1,0 +1,41 @@
+# Secrets: never commit runtime credentials.
+.env
+.env.*
+**/.env
+**/.env.*
+**/credentials.json
+**/credentials.enc
+**/*credentials*backup*
+
+# Archives and local delivery bundles.
+*.zip
+
+# Python/runtime artifacts.
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/logs/
+**/data/sessions/
+**/data/uploads/
+**/data/cache/
+**/data/_ds_*.csv
+**/data/memory.json
+
+# Frontend dependencies and builds.
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Generated files and local tooling.
+**/static/generated/
+**/.gradio/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Accidental zero-byte artifacts in the original delivery folder.
+MiniCode_full_all_files/MiniCode/-
+MiniCode_full_all_files/MiniCode/{agentName}
+MiniCode_full_all_files/MiniCode/🎓

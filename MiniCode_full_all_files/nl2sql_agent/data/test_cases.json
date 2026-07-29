@@ -1,0 +1,227 @@
+[
+  {
+    "id": "E01",
+    "question": "价格大于5000元的商品有哪些？按价格从高到低排列",
+    "expected_sql_pattern": "SELECT.*FROM products.*WHERE.*price\\s*>\\s*5000.*ORDER BY.*price\\s*DESC",
+    "expected_result_hint": {"min_rows": 3, "max_rows": 30, "contains_product": "MacBook Pro"},
+    "difficulty": "easy",
+    "tables": ["products"],
+    "skills": ["single_table", "order_by"]
+  },
+  {
+    "id": "E02",
+    "question": "商品名包含'Pro'的商品有哪些？",
+    "expected_sql_pattern": "SELECT.*FROM products.*WHERE.*name\\s*LIKE.*Pro",
+    "expected_result_hint": {"min_rows": 5, "max_rows": 40, "contains_product": "MacBook Pro"},
+    "difficulty": "easy",
+    "tables": ["products"],
+    "skills": ["single_table", "like"]
+  },
+  {
+    "id": "E03",
+    "question": "有哪些商品品类？列出所有不重复的品类名",
+    "expected_sql_pattern": "SELECT\\s+DISTINCT\\s+category.*FROM\\s+products",
+    "expected_result_hint": {"exact_row_count": 5},
+    "difficulty": "easy",
+    "tables": ["products"],
+    "skills": ["single_table", "distinct"]
+  },
+  {
+    "id": "E04",
+    "question": "北京、上海、广州的用户有哪些？按城市排列",
+    "expected_sql_pattern": "SELECT.*FROM users.*WHERE.*city\\s+IN\\s*\\(.*北京.*上海.*广州",
+    "expected_result_hint": {"min_rows": 10, "max_rows": 55},
+    "difficulty": "easy",
+    "tables": ["users"],
+    "skills": ["single_table", "order_by"]
+  },
+  {
+    "id": "E05",
+    "question": "注册最早的10个用户是谁？显示姓名和注册日期",
+    "expected_sql_pattern": "SELECT.*FROM users.*ORDER BY.*register_date.*ASC.*LIMIT\\s+10",
+    "expected_result_hint": {"exact_row_count": 10},
+    "difficulty": "easy",
+    "tables": ["users"],
+    "skills": ["single_table", "order_by", "limit"]
+  },
+  {
+    "id": "E06",
+    "question": "铂金会员有哪些人？",
+    "expected_sql_pattern": "SELECT.*FROM users.*WHERE.*tier.*=.*铂金",
+    "expected_result_hint": {"min_rows": 10, "max_rows": 50},
+    "difficulty": "easy",
+    "tables": ["users"],
+    "skills": ["single_table"]
+  },
+  {
+    "id": "E07",
+    "question": "库存少于20件的商品有哪些？显示商品名和库存量",
+    "expected_sql_pattern": "SELECT.*FROM products.*WHERE.*stock\\s*<\\s*20",
+    "expected_result_hint": {"min_rows": 0, "max_rows": 30},
+    "difficulty": "easy",
+    "tables": ["products"],
+    "skills": ["single_table"]
+  },
+  {
+    "id": "E08",
+    "question": "所有品牌有哪些？列出不重复的品牌名",
+    "expected_sql_pattern": "SELECT\\s+DISTINCT\\s+brand.*FROM\\s+products",
+    "expected_result_hint": {"min_rows": 20},
+    "difficulty": "easy",
+    "tables": ["products"],
+    "skills": ["single_table", "distinct"]
+  },
+  {
+    "id": "M01",
+    "question": "每个品类的商品数量是多少？按数量从高到低排列",
+    "expected_sql_pattern": "SELECT.*category.*COUNT.*FROM products.*GROUP BY.*category.*ORDER BY.*DESC",
+    "expected_result_hint": {"exact_row_count": 5, "contains": ["电子产品", "美妆", "服装", "数码配件", "食品饮料"]},
+    "difficulty": "medium",
+    "tables": ["products"],
+    "skills": ["aggregation", "group_by", "order_by"]
+  },
+  {
+    "id": "M02",
+    "question": "商品平均价格最高的品类是哪个？",
+    "expected_sql_pattern": "SELECT.*category.*AVG.*price.*FROM products.*GROUP BY.*category.*ORDER BY.*DESC.*LIMIT\\s+1",
+    "expected_result_hint": {"exact_row_count": 1},
+    "difficulty": "medium",
+    "tables": ["products"],
+    "skills": ["aggregation", "group_by", "order_by", "limit"]
+  },
+  {
+    "id": "M03",
+    "question": "每个用户下了多少个订单？显示用户名和订单数，取前10名",
+    "expected_sql_pattern": "SELECT.*name.*COUNT.*order_id.*FROM.*users.*JOIN.*orders.*ON.*user_id.*GROUP BY.*ORDER BY.*DESC.*LIMIT",
+    "expected_result_hint": {"exact_row_count": 10},
+    "difficulty": "medium",
+    "tables": ["users", "orders"],
+    "skills": ["join", "aggregation", "group_by", "order_by", "limit"]
+  },
+  {
+    "id": "M04",
+    "question": "2024年3月的订单总金额是多少？",
+    "expected_sql_pattern": "SELECT\\s+SUM.*total_amount.*FROM orders.*WHERE.*order_date.*2024-03",
+    "expected_result_hint": {"min_rows": 1},
+    "difficulty": "medium",
+    "tables": ["orders"],
+    "skills": ["aggregation", "date_filter"]
+  },
+  {
+    "id": "M05",
+    "question": "哪些用户浏览过商品但从未下过单？",
+    "expected_sql_pattern": "SELECT.*FROM users.*JOIN user_behaviors.*user_id\\s+NOT\\s+IN.*SELECT.*user_id.*FROM orders",
+    "expected_result_hint": {"min_rows": 5, "max_rows": 20},
+    "difficulty": "medium",
+    "tables": ["users", "user_behaviors", "orders"],
+    "skills": ["join", "subquery"]
+  },
+  {
+    "id": "M06",
+    "question": "苹果（Apple）品牌的商品总共有多少件？",
+    "expected_sql_pattern": "SELECT\\s+COUNT.*FROM\\s+products.*WHERE.*brand.*Apple",
+    "expected_result_hint": {"Apple产品超过5件": true},
+    "difficulty": "medium",
+    "tables": ["products"],
+    "skills": ["aggregation"]
+  },
+  {
+    "id": "M07",
+    "question": "订单金额大于1000元的订单有多少个？",
+    "expected_sql_pattern": "SELECT\\s+COUNT.*FROM.*orders.*WHERE.*total_amount\\s*>\\s*1000",
+    "expected_result_hint": {"min_rows": 1},
+    "difficulty": "medium",
+    "tables": ["orders"],
+    "skills": ["aggregation"]
+  },
+  {
+    "id": "H01",
+    "question": "北京用户买得最多的商品品类是什么？",
+    "expected_sql_pattern": "SELECT.*category.*COUNT.*FROM.*order_items.*JOIN.*orders.*JOIN.*users.*JOIN.*products.*WHERE.*city.*北京.*GROUP BY.*category.*ORDER BY.*DESC.*LIMIT",
+    "expected_result_hint": {"category": "电子产品"},
+    "difficulty": "hard",
+    "tables": ["users", "orders", "order_items", "products"],
+    "skills": ["join", "aggregation", "group_by", "order_by", "limit"]
+  },
+  {
+    "id": "H02",
+    "question": "客单价（每笔订单平均金额）高于所有订单平均客单价的用户有哪些？显示姓名和客单价",
+    "expected_sql_pattern": "SELECT.*name.*AVG.*total_amount.*FROM users.*JOIN orders.*GROUP BY.*user_id.*HAVING.*AVG.*SELECT.*AVG.*FROM orders",
+    "expected_result_hint": {"min_rows": 50, "max_rows": 300},
+    "difficulty": "hard",
+    "tables": ["users", "orders"],
+    "skills": ["join", "aggregation", "group_by", "having", "subquery"]
+  },
+  {
+    "id": "H03",
+    "question": "购买过电子产品的用户还买过哪些其他品类的商品？列出品类和购买人数",
+    "expected_sql_pattern": "SELECT.*category.*COUNT.*DISTINCT.*FROM.*products.*(WHERE|JOIN).*(电子产品|electronics).*(category.*!=.*电子产品|!=.*电子产品).*GROUP BY.*category",
+    "expected_result_hint": {"min_rows": 1, "max_rows": 4},
+    "difficulty": "hard",
+    "tables": ["products", "orders", "order_items"],
+    "skills": ["join", "aggregation", "group_by", "subquery"]
+  },
+  {
+    "id": "H04",
+    "question": "销售额最高的前5个商品是什么？显示商品名、品类和销售额",
+    "expected_sql_pattern": "SELECT.*name.*category.*SUM.*subtotal.*FROM order_items.*JOIN products.*GROUP BY.*product_id.*ORDER BY.*DESC.*LIMIT\\s+5",
+    "expected_result_hint": {"exact_row_count": 5},
+    "difficulty": "hard",
+    "tables": ["products", "order_items"],
+    "skills": ["join", "aggregation", "group_by", "order_by", "limit"]
+  },
+  {
+    "id": "H05",
+    "question": "把商品加入购物车但从未下单的用户中，加购次数最多的前5个用户是谁？显示姓名和加购次数",
+    "expected_sql_pattern": "SELECT.*name.*COUNT.*FROM users.*JOIN user_behaviors.*cart.*user_id\\s+NOT\\s+IN.*SELECT.*user_id.*FROM orders.*GROUP BY.*ORDER BY.*DESC.*LIMIT\\s+5",
+    "expected_result_hint": {"exact_row_count": 5, "note": "这些用户在user_behaviors有cart行为，但user_id不在orders表中"},
+    "difficulty": "hard",
+    "tables": ["users", "user_behaviors", "orders"],
+    "skills": ["join", "aggregation", "group_by", "order_by", "subquery", "limit"]
+  },
+  {
+    "id": "H06",
+    "question": "商品总销量排名（注意：销量数据需通过order_items表统计，products表没有销量列）",
+    "expected_sql_pattern": "SELECT.*products.*JOIN.*order_items.*SUM.*quantity|subtotal.*GROUP BY.*ORDER BY.*DESC",
+    "expected_result_hint": {"min_rows": 5, "max_rows": 50, "note": "自纠错验证: LLM可能第一轮用不存在的sales列→报错→第二轮修正为JOIN order_items"},
+    "difficulty": "hard",
+    "tables": ["products", "order_items"],
+    "skills": ["join", "aggregation", "group_by", "order_by"]
+  },
+  {
+    "id": "A01",
+    "question": "周末和工作日的订单量分别是多少？",
+    "expected_sql_pattern": "SELECT.*strftime|CASE.*order_date.*GROUP BY",
+    "expected_result_hint": {"exact_row_count": 2, "note": "算法工程师: 时间模式分析"},
+    "difficulty": "medium",
+    "tables": ["orders"],
+    "skills": ["aggregation", "group_by", "date_filter"]
+  },
+  {
+    "id": "A02",
+    "question": "不同会员等级的复购率对比（复购定义为下单次数>=2）",
+    "expected_sql_pattern": "SELECT.*tier.*COUNT.*CASE.*order_count|HAVING.*COUNT.*>=.*2.*GROUP BY.*tier",
+    "expected_result_hint": {"exact_row_count": 4, "note": "算法工程师: 用户分层分析"},
+    "difficulty": "hard",
+    "tables": ["users", "orders"],
+    "skills": ["join", "aggregation", "group_by", "subquery"]
+  },
+  {
+    "id": "A03",
+    "question": "只浏览不购买的用户主要看了哪些品类的商品？统计各品类的浏览量",
+    "expected_sql_pattern": "SELECT.*category.*COUNT.*FROM.*user_behaviors.*JOIN.*products.*NOT IN.*SELECT.*user_id.*FROM orders.*GROUP BY.*category",
+    "expected_result_hint": {"min_rows": 1, "max_rows": 5, "note": "算法工程师: 流失用户分析"},
+    "difficulty": "hard",
+    "tables": ["user_behaviors", "products", "orders"],
+    "skills": ["join", "aggregation", "group_by", "subquery"]
+  },
+  {
+    "id": "A04",
+    "question": "各品类的加购件数和实际下单件数的比值（加购下单转化率）",
+    "expected_sql_pattern": "SELECT.*category.*COUNT.*cart.*COUNT.*orders|order_items.*FROM.*user_behaviors.*JOIN.*products",
+    "expected_result_hint": {"exact_row_count": 5, "note": "算法工程师: 转化漏斗分析"},
+    "difficulty": "hard",
+    "tables": ["user_behaviors", "products", "order_items"],
+    "skills": ["join", "aggregation", "group_by", "subquery"]
+  }
+]

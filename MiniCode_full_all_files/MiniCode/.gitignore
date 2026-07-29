@@ -1,0 +1,33 @@
+# ─── Secrets（FEATURE_PLAN.md §5）─────────────────────────────
+data/credentials.json
+data/credentials.enc
+.env
+.env.*
+!.env.example
+
+# ─── Runtime ────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+logs/
+data/sessions/
+data/_ds_*.csv
+data/memory.json
+
+# ─── 上传/缓存 ───────────────────────────────────────────────
+data/uploads/
+data/cache/
+
+# ─── 前端 ───────────────────────────────────────────────────
+web/node_modules/
+web/dist/
+web/.vite/
+
+# ─── OS ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── IDE ────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml

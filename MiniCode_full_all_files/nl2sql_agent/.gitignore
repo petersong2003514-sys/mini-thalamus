@@ -1,0 +1,6 @@
+.env
+ngrok.yml
+__pycache__/
+*.pyc
+*.db
+report.json

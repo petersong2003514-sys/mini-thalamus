@@ -1,0 +1,18 @@
+{
+  "sources": [
+    {
+      "name": "电商主库",
+      "db_path": "data/ecommerce.db",
+      "db_type": "sqlite",
+      "description": "电商平台核心业务数据库，包含用户、商品、订单、行为数据",
+      "tables_hint": "users(用户), products(商品), orders(订单), order_items(明细), user_behaviors(行为)"
+    },
+    {
+      "name": "电商备库",
+      "db_path": "data/ecommerce.db",
+      "db_type": "sqlite",
+      "description": "电商只读副本，与主库结构相同，用于分析查询",
+      "tables_hint": "users, products, orders, order_items, user_behaviors"
+    }
+  ]
+}

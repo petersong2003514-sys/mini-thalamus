@@ -1,0 +1,277 @@
+import unittest
+
+from base_agent import AgentResult
+from route_schema import RouteDecision
+from workflow_executor import WorkflowExecutor
+
+
+SPECS = {
+    "nl2sql": {
+        "output_schema": {
+            "exports": ["answer", "summary", "data.structured"],
+        },
+    },
+    "code": {
+        "output_schema": {
+            "exports": ["answer", "summary", "data.artifacts"],
+        },
+    },
+    "report_writer": {
+        "output_schema": {
+            "exports": ["answer", "summary", "data.report"],
+        },
+    },
+}
+
+
+class RecordingAgent:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def run(self, query, context=None):
+        self.calls.append({"query": query, "context": context or {}})
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+class FlakyAgent:
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, query, context=None):
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "status": "error",
+                "answer": "temporary",
+                "metadata": {"error_type": "transient_error"},
+            }
+        return {"status": "success", "answer": "recovered"}
+
+
+class FakeRuntime:
+    def __init__(self, agents):
+        self.agents = agents
+
+    def get_agent(self, agent_id):
+        return self.agents[agent_id]
+
+
+def decision(payload):
+    return RouteDecision.from_dict(payload, agent_specs=SPECS)
+
+
+def call(call_id, intent, agent, instruction, depends_on=None, input_refs=None,
+         policy=None):
+    value = {
+        "call_id": call_id,
+        "intent": intent,
+        "function": {
+            "name": agent,
+            "arguments": {
+                "instruction": instruction,
+                "input_refs": input_refs or [],
+            },
+        },
+        "depends_on": depends_on or [],
+        "confidence": 0.9,
+    }
+    if policy is not None:
+        value["policy"] = policy
+    return value
+
+
+def route_payload(calls):
+    return {
+        "mode": "single" if len(calls) == 1 else "workflow",
+        "calls": calls,
+        "candidates": [],
+        "overall_confidence": 0.9,
+        "method": "test",
+        "reason": "test workflow",
+        "trace_id": "trace-test",
+    }
+
+
+class WorkflowExecutorTests(unittest.TestCase):
+    def test_single_intent_executes_one_agent_with_atomic_instruction(self):
+        nl2sql = RecordingAgent(AgentResult(
+            answer="42",
+            summary="done",
+            data={"structured": {"rows": [[42]]}},
+        ))
+        executor = WorkflowExecutor(runtime=FakeRuntime({"nl2sql": nl2sql}))
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "查询销售额"),
+        ]))
+
+        result = executor.execute(route, original_query="原始复合描述")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["answer"], "42")
+        self.assertEqual(nl2sql.calls[0]["query"], "查询销售额")
+        self.assertEqual(len(result["trace"]), 1)
+
+    def test_dependency_outputs_are_resolved_by_input_refs(self):
+        nl2sql = RecordingAgent({
+            "status": "success",
+            "answer": "data",
+            "summary": "query done",
+            "data": {"structured": {"headers": ["region"], "rows": [["华东"]]}},
+        })
+        code = RecordingAgent({
+            "status": "success",
+            "answer": "chart",
+            "summary": "chart done",
+            "data": {"artifacts": ["chart.png"]},
+        })
+        report = RecordingAgent({
+            "status": "success",
+            "answer": "report",
+            "summary": "report done",
+            "data": {"report": "final.md"},
+        })
+        executor = WorkflowExecutor(
+            runtime=FakeRuntime({
+                "nl2sql": nl2sql,
+                "code": code,
+                "report_writer": report,
+            })
+        )
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "查询销售额"),
+            call(
+                "step_2",
+                "data_visualization",
+                "code",
+                "绘制图表",
+                depends_on=["step_1"],
+                input_refs=["step_1.data.structured"],
+            ),
+            call(
+                "step_3",
+                "report_generation",
+                "report_writer",
+                "生成报告",
+                depends_on=["step_1", "step_2"],
+                input_refs=[
+                    "step_1.data.structured",
+                    "step_2.data.artifacts",
+                ],
+            ),
+        ]))
+
+        result = executor.execute(route, original_query="查数据画图写报告")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(code.calls[0]["query"], "绘制图表")
+        self.assertEqual(
+            code.calls[0]["context"]["workflow_inputs"],
+            {
+                "step_1.data.structured": {
+                    "headers": ["region"],
+                    "rows": [["华东"]],
+                },
+            },
+        )
+        self.assertEqual(
+            report.calls[0]["context"]["workflow_inputs"][
+                "step_2.data.artifacts"
+            ],
+            ["chart.png"],
+        )
+        self.assertEqual(
+            [entry["agent_id"] for entry in result["trace"]],
+            ["nl2sql", "code", "report_writer"],
+        )
+
+    def test_failed_dependency_is_skipped_but_independent_call_runs(self):
+        nl2sql = RecordingAgent(RuntimeError("database down"))
+        code = RecordingAgent({
+            "status": "success",
+            "answer": "chart",
+            "summary": "chart",
+            "data": {"artifacts": []},
+        })
+        report = RecordingAgent({
+            "status": "success",
+            "answer": "independent report",
+            "summary": "report",
+            "data": {"report": "ok"},
+        })
+        executor = WorkflowExecutor(
+            runtime=FakeRuntime({
+                "nl2sql": nl2sql,
+                "code": code,
+                "report_writer": report,
+            })
+        )
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "查询"),
+            call(
+                "step_2",
+                "data_visualization",
+                "code",
+                "绘图",
+                depends_on=["step_1"],
+                input_refs=["step_1.data.structured"],
+            ),
+            call("step_3", "report_generation", "report_writer", "写独立说明"),
+        ]))
+
+        result = executor.execute(route, original_query="test")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["step_1"]["status"], "error")
+        self.assertEqual(result["results"]["step_2"]["status"], "skipped")
+        self.assertEqual(result["results"]["step_3"]["status"], "success")
+        self.assertEqual(code.calls, [])
+        self.assertEqual(len(report.calls), 1)
+
+    def test_high_risk_call_returns_checkpoint_before_execution(self):
+        code = RecordingAgent({
+            "status": "success",
+            "answer": "done",
+            "summary": "done",
+            "data": {"artifacts": []},
+        })
+        executor = WorkflowExecutor(runtime=FakeRuntime({"code": code}))
+        route = decision(route_payload([
+            call(
+                "step_1",
+                "code_execution",
+                "code",
+                "执行代码",
+                policy={
+                    "risk_level": "workspace_write",
+                    "requires_approval": True,
+                    "reason": "writes files",
+                },
+            ),
+        ]))
+
+        result = executor.execute(route, original_query="执行代码")
+
+        self.assertEqual(result["status"], "checkpoint")
+        self.assertEqual(result["pending_call"]["call_id"], "step_1")
+        self.assertEqual(code.calls, [])
+
+    def test_transient_error_gets_one_bounded_retry(self):
+        agent = FlakyAgent()
+        executor = WorkflowExecutor(FakeRuntime({"nl2sql": agent}))
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "query"),
+        ]))
+
+        result = executor.execute(route, original_query="query")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(agent.calls, 2)
+        self.assertEqual(result["trace"][0]["attempt"], 2)
+        self.assertTrue(result["trace"][0]["retry"])
+
+
+if __name__ == "__main__":
+    unittest.main()
