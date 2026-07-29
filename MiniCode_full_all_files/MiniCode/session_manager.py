@@ -1,10 +1,17 @@
-"""统一会话管理 —— 跨 Agent 上下文共享 + 磁盘持久化"""
+"""统一会话管理 —— 跨 Agent 上下文共享 + SQLite 持久化。"""
+
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-import uuid
-import time
-import os
+from typing import Dict, List, Optional
 import json
+import os
+import time
+import uuid
+
+from memory_db import MemoryDatabase
+
+
+class SessionOwnershipError(PermissionError):
+    """Raised when a session belongs to another user."""
 
 
 @dataclass
@@ -33,7 +40,7 @@ class Session:
         self._compact_if_needed()
 
     def _compact_if_needed(self):
-        """Deterministically compact old turns before the context budget is exceeded."""
+        """Deterministically compact old turns before the context budget."""
         max_chars = max(80, int(self.max_context_tokens) * 4)
         current_chars = len(self.summary) + sum(
             len(str(message.get("content", ""))) for message in self.messages
@@ -80,81 +87,144 @@ class Session:
 
     def to_dict(self) -> dict:
         return {
-            "session_id": self.session_id, "user_id": self.user_id,
+            "session_id": self.session_id,
+            "user_id": self.user_id,
             "created_at": self.created_at,
             "messages": self.messages[-20:],
             "agent_history": self.agent_history,
             "summary": self.summary,
+            "last_result": self.last_result,
+            "max_context_tokens": self.max_context_tokens,
         }
+
+    @classmethod
+    def from_record(cls, row) -> "Session":
+        return cls(
+            session_id=row["session_id"],
+            user_id=row["user_id"],
+            created_at=float(row["created_at"]),
+            messages=json.loads(row["recent_messages_json"] or "[]"),
+            agent_history=json.loads(row["agent_history_json"] or "[]"),
+            summary=row["summary"] or "",
+            last_result=(
+                json.loads(row["last_result_json"])
+                if row["last_result_json"]
+                else None
+            ),
+            max_context_tokens=int(row["max_context_tokens"]),
+        )
 
 
 class SessionManager:
-    """会话管理器 —— 内存 + 磁盘持久化"""
+    """Session identity and window repository backed by SQLite."""
 
-    def __init__(self, persist_dir: str = None):
+    def __init__(
+        self,
+        persist_dir: str = None,
+        database: MemoryDatabase = None,
+    ):
         self._sessions: Dict[str, Session] = {}
-        self._persist_dir = persist_dir or os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "data", "sessions")
-        try:
-            os.makedirs(self._persist_dir, exist_ok=True)
-        except OSError:
-            self._persist_dir = None  # read-only FS: skip disk persistence
+        default_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "data",
+            "agent_memory.db",
+        )
+        if persist_dir:
+            default_path = os.path.join(persist_dir, "agent_memory.db")
+        self.database = database or MemoryDatabase(default_path)
+        self.database.initialize()
 
-    def create(self, user_id: str = "default") -> Session:
-        sid = str(uuid.uuid4())[:8]
+    def create(
+        self,
+        user_id: str = "default",
+        session_id: str = None,
+    ) -> Session:
+        sid = session_id or uuid.uuid4().hex[:8]
         session = Session(session_id=sid, user_id=user_id)
         self._sessions[sid] = session
+        self.save(session)
         return session
 
     def get(self, session_id: str) -> Optional[Session]:
         return self._sessions.get(session_id)
 
     def get_or_create(self, user_id: str, session_id: str = None) -> Session:
-        if session_id and session_id in self._sessions:
-            return self._sessions[session_id]
-        # 尝试从磁盘恢复
-        if session_id:
-            restored = self._load_from_disk(session_id)
-            if restored:
-                self._sessions[session_id] = restored
-                return restored
-        return self.create(user_id)
+        return self.resolve(user_id, session_id)
 
-    def save(self, session: Session):
-        """持久化 session 到磁盘（原子写入，防并发损坏）"""
-        path = os.path.join(self._persist_dir, session.session_id, "session.json")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
-            os.replace(tmp, path)
-        finally:
-            if os.path.exists(tmp):
-                try: os.remove(tmp)
-                except OSError: pass
+    def resolve(self, user_id: str, session_id: str = None) -> Session:
+        sid = session_id or uuid.uuid4().hex[:8]
+        cached = self._sessions.get(sid)
+        if cached is not None:
+            if cached.user_id != user_id:
+                raise SessionOwnershipError(sid)
+            return cached
 
-    def _load_from_disk(self, sid: str) -> Optional[Session]:
-        path = os.path.join(self._persist_dir, sid, "session.json")
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return Session(
-                session_id=data["session_id"], user_id=data.get("user_id", "default"),
-                created_at=data.get("created_at", time.time()),
-                messages=data.get("messages", []),
-                agent_history=data.get("agent_history", []),
-                summary=data.get("summary", ""),
-            )
-        except Exception:
-            return None
+        row = self._load_row(sid)
+        if row is not None:
+            if row["user_id"] != user_id:
+                raise SessionOwnershipError(sid)
+            session = Session.from_record(row)
+            self._sessions[sid] = session
+            return session
+        return self.create(user_id, sid)
+
+    def save(self, session: Session, conn=None):
+        """Persist a complete session, optionally in a caller transaction."""
+        payload = session.to_dict()
+        parameters = (
+            session.session_id,
+            session.user_id,
+            session.summary,
+            json.dumps(payload["messages"], ensure_ascii=False),
+            (
+                json.dumps(payload["last_result"], ensure_ascii=False)
+                if payload["last_result"] is not None
+                else None
+            ),
+            json.dumps(payload["agent_history"], ensure_ascii=False),
+            int(payload["max_context_tokens"]),
+            float(session.created_at),
+            time.time(),
+        )
+        statement = """
+            INSERT INTO sessions (
+                session_id, user_id, summary, recent_messages_json,
+                last_result_json, agent_history_json, max_context_tokens,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                user_id=excluded.user_id,
+                summary=excluded.summary,
+                recent_messages_json=excluded.recent_messages_json,
+                last_result_json=excluded.last_result_json,
+                agent_history_json=excluded.agent_history_json,
+                max_context_tokens=excluded.max_context_tokens,
+                updated_at=excluded.updated_at
+        """
+        if conn is not None:
+            conn.execute(statement, parameters)
+            return
+        with self.database.transaction() as owned:
+            owned.execute(statement, parameters)
+
+    def _load_row(self, session_id: str):
+        with self.database.connection() as conn:
+            return conn.execute(
+                "SELECT * FROM sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
 
     def list_sessions(self, user_id: str = None) -> List[Session]:
         if user_id:
-            return [s for s in self._sessions.values() if s.user_id == user_id]
+            return [
+                session
+                for session in self._sessions.values()
+                if session.user_id == user_id
+            ]
         return list(self._sessions.values())
 
     def delete(self, session_id: str):
         self._sessions.pop(session_id, None)
+
+
+__all__ = ["Session", "SessionManager", "SessionOwnershipError"]
