@@ -65,7 +65,7 @@ class MemoryDatabase:
                     "memory database schema is newer than this program supports"
                 )
 
-            conn.executescript(
+            schema_sql = (
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
@@ -146,6 +146,9 @@ class MemoryDatabase:
                 );
                 """
             )
+            for statement in schema_sql.split(";"):
+                if statement.strip():
+                    conn.execute(statement)
             conn.execute(
                 """
                 INSERT INTO schema_meta(key, value)

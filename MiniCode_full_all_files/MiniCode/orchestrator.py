@@ -64,6 +64,7 @@ class Orchestrator:
         user_id: str = "default",
         session_id: str = None,
         approved_call_ids=None,
+        decision_override: RouteDecision = None,
     ) -> dict:
         session = self.memory_service.resolve_session(user_id, session_id)
         sid = session.session_id
@@ -77,7 +78,7 @@ class Orchestrator:
                     "file_names": files,
                     "session_id": sid,
                 }
-            decision = self.router.route_decision(
+            decision = decision_override or self.router.route_decision(
                 user_message,
                 session_context=session.get_context_for("router"),
                 file_context=file_context,
@@ -160,7 +161,10 @@ class Orchestrator:
                     previous_result=previous_result,
                     workflow_inputs=workflow_inputs,
                 )
-                return {"memory": memory_context.to_dict()}
+                return {
+                    "memory": memory_context.to_dict(),
+                    "session_state": self.memory_service.session_state(sid),
+                }
 
             execution = self.workflow_executor.execute(
                 decision,
@@ -361,14 +365,11 @@ class MultiStepOrchestrator(Orchestrator):
             },
             agent_specs=specs,
         )
-        session = self.session_mgr.get_or_create(user_id)
-        result = self.workflow_executor.execute(
-            decision,
-            original_query=user_message,
-            context={"session_id": session.session_id},
+        return self.process(
+            user_message,
+            user_id=user_id,
+            decision_override=decision,
         )
-        result["session_id"] = session.session_id
-        return result
 
     def _legacy_specs(self, plan: list) -> dict:
         if self.registry is not None:

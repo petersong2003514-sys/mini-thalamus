@@ -10,6 +10,28 @@ from memory_store import MemoryStore
 from session_manager import Session, SessionManager
 
 
+class SessionStateView:
+    """A session-bound, narrow state interface for child Agents."""
+
+    def __init__(self, service: "MemoryService", session_id: str):
+        self._service = service
+        self._session_id = session_id
+
+    def get(self, state_key: str, default=None):
+        return self._service.get_session_state(
+            self._session_id,
+            state_key,
+            default,
+        )
+
+    def set(self, state_key: str, value):
+        return self._service.set_session_state(
+            self._session_id,
+            state_key,
+            value,
+        )
+
+
 class MemoryService:
     def __init__(
         self,
@@ -192,6 +214,9 @@ class MemoryService:
     def set_session_state(self, session_id: str, state_key: str, value):
         return self.store.set_session_state(session_id, state_key, value)
 
+    def session_state(self, session_id: str) -> SessionStateView:
+        return SessionStateView(self, session_id)
+
 
 _service = None
 _service_lock = threading.Lock()
@@ -226,6 +251,7 @@ def reset_memory_service_for_tests():
 
 __all__ = [
     "MemoryService",
+    "SessionStateView",
     "get_memory_service",
     "reset_memory_service_for_tests",
 ]

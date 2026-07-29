@@ -1,6 +1,8 @@
 import os
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from memory_db import MemoryDatabase
 from session_manager import SessionManager, SessionOwnershipError
@@ -37,6 +39,57 @@ class SessionPersistenceTests(unittest.TestCase):
 
         with self.assertRaises(SessionOwnershipError):
             SessionManager(database=self.db).resolve("bob", "private-session")
+
+    def test_concurrent_first_claim_has_exactly_one_owner(self):
+        managers = [
+            SessionManager(database=self.db),
+            SessionManager(database=self.db),
+        ]
+        barrier = threading.Barrier(2)
+        for manager in managers:
+            original = manager._load_row
+            first_read = {"pending": True}
+
+            def synchronized_load(session_id, original=original,
+                                  first_read=first_read):
+                row = original(session_id)
+                if first_read["pending"]:
+                    first_read["pending"] = False
+                    barrier.wait(timeout=5)
+                return row
+
+            manager._load_row = synchronized_load
+
+        def claim(index):
+            try:
+                return managers[index].resolve(
+                    ("alice", "bob")[index],
+                    "contested-session",
+                ).user_id
+            except SessionOwnershipError:
+                return "rejected"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(claim, (0, 1)))
+
+        self.assertEqual(outcomes.count("rejected"), 1)
+        durable = SessionManager(database=self.db)._load_row(
+            "contested-session"
+        )
+        self.assertIn(durable["user_id"], {"alice", "bob"})
+
+    def test_save_cannot_change_session_owner(self):
+        manager = SessionManager(database=self.db)
+        session = manager.resolve("alice", "stable-owner")
+        session.user_id = "bob"
+
+        with self.assertRaises(SessionOwnershipError):
+            manager.save(session)
+
+        restored = SessionManager(database=self.db).resolve(
+            "alice", "stable-owner"
+        )
+        self.assertEqual(restored.user_id, "alice")
 
     def test_get_or_create_keeps_caller_supplied_id(self):
         session = SessionManager(database=self.db).get_or_create(

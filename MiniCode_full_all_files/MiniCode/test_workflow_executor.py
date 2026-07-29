@@ -1,6 +1,7 @@
 import unittest
 
 from base_agent import AgentResult
+from agents.report_writer_agent import ReportWriterAgent
 from route_schema import RouteDecision
 from workflow_executor import WorkflowExecutor
 
@@ -96,6 +97,58 @@ def route_payload(calls):
 
 
 class WorkflowExecutorTests(unittest.TestCase):
+    def test_memory_context_is_rendered_for_a_context_ignorant_real_agent(self):
+        report = ReportWriterAgent.__new__(ReportWriterAgent)
+        seen_topics = []
+
+        def generate_outline(topic):
+            seen_topics.append(topic)
+            return {"title": "Report", "sections": []}
+
+        report._generate_outline = generate_outline
+        report._write_sections = lambda topic, outline: []
+        executor = WorkflowExecutor(
+            runtime=FakeRuntime({"report_writer": report})
+        )
+        route = decision(route_payload([
+            call(
+                "step_1",
+                "report_generation",
+                "report_writer",
+                "Write the report",
+            ),
+        ]))
+
+        result = executor.execute(
+            route,
+            original_query="Continue the prior report",
+            context_provider=lambda route_call, results: {
+                "memory": {
+                    "current_query": "Write the report",
+                    "relevant_history": [
+                        {"q": "Prior question", "a": "Prior answer"},
+                    ],
+                    "tags": ["report"],
+                    "long_term": {"language": "Chinese"},
+                    "files": [],
+                    "session_id": "s1",
+                    "previous_result": {"summary": "Research complete"},
+                    "conversation_history": "user: Earlier context",
+                    "workflow_inputs": {
+                        "step_0.data": {"value": 42},
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(result["status"], "success")
+        rendered = seen_topics[0]
+        self.assertIn("Write the report", rendered)
+        self.assertIn("Prior answer", rendered)
+        self.assertIn("Chinese", rendered)
+        self.assertIn("Research complete", rendered)
+        self.assertIn('"value": 42', rendered)
+
     def test_single_intent_executes_one_agent_with_atomic_instruction(self):
         nl2sql = RecordingAgent(AgentResult(
             answer="42",

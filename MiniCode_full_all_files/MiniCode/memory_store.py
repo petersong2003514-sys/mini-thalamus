@@ -18,6 +18,7 @@ import os, json, time, re, threading, uuid
 from dataclasses import dataclass
 
 from memory_db import MemoryDatabase
+from session_identity import contained_session_dir
 from typing import Optional
 
 DATA_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -58,6 +59,10 @@ class LongTermMemory:
     updated_at: float
 
 
+class TurnStateError(RuntimeError):
+    """Raised when code attempts an invalid turn state transition."""
+
+
 class MemoryStore:
     """统一记忆存储：文件持久化 + 标签索引"""
 
@@ -91,7 +96,7 @@ class MemoryStore:
     # 会话路径
     # ═══════════════════════════════════════════════
     def _session_dir(self, sid: str) -> str:
-        d = os.path.join(self.root, "sessions", sid)
+        d = contained_session_dir(self.root, sid)
         os.makedirs(d, exist_ok=True)
         return d
 
@@ -497,9 +502,9 @@ class MemoryStore:
     def cleanup_session(self, sid: str):
         """删除 session 所有数据"""
         import shutil
-        d = os.path.join(self.root, "sessions", sid)
+        d = contained_session_dir(self.root, sid)
         if os.path.isdir(d):
-            shutil.rmtree(d, ignore_errors=True)
+            shutil.rmtree(d)
 
     # ═══════════════════════════════════════════════
     # 内部：JSON 读写
@@ -658,7 +663,7 @@ class MemoryStore:
                 """
                 UPDATE turns
                 SET answer=?, agent_id=?, status=?, tags_json=?, completed_at=?
-                WHERE turn_id=?
+                WHERE turn_id=? AND status='running'
                 """,
                 (
                     answer,
@@ -670,7 +675,15 @@ class MemoryStore:
                 ),
             )
             if cursor.rowcount != 1:
-                raise KeyError(f"unknown turn: {turn_id}")
+                row = active.execute(
+                    "SELECT status FROM turns WHERE turn_id=?",
+                    (turn_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"unknown turn: {turn_id}")
+                raise TurnStateError(
+                    f"turn {turn_id} is already terminal: {row['status']}"
+                )
             return self._turn_from_row(
                 active.execute(
                     "SELECT * FROM turns WHERE turn_id=?",

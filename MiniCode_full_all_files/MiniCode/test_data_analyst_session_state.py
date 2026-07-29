@@ -21,7 +21,6 @@ class DataAnalystSessionStateTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_dataset_path_is_recovered_from_session_state(self):
-        legacy_cache = {}
         agent = module.DataAnalystAgent()
         agent._generate_analysis_code = lambda query, path, profile: "print('ok')"
         agent._sandbox_execute = lambda code: {
@@ -35,31 +34,32 @@ class DataAnalystSessionStateTests(unittest.TestCase):
             "content": b"region,revenue\nbeijing,100\n",
         }
 
-        with patch("memory_service._service", self.service), patch(
-            "memory_store._store", self.service.store
-        ), patch.object(
-            self.service.store,
-            "set_long_term",
-            side_effect=lambda key, value: legacy_cache.__setitem__(key, value),
-        ), patch.object(
-            self.service.store,
-            "get_long_term",
-            side_effect=lambda key, default=None: legacy_cache.get(key, default),
+        state_view = self.service.session_state("s1")
+        with patch(
+            "memory_service.get_memory_service",
+            side_effect=AssertionError("global service must not be used"),
         ), patch.object(module, "_MINICODE_ROOT", self.temp_dir.name):
             first = agent.run(
                 "统计销售额",
-                context={"session_id": "s1", "files": [upload]},
+                context={
+                    "session_id": "s1",
+                    "files": [upload],
+                    "session_state": state_view,
+                },
             )
             second = agent.run(
                 "继续分析",
-                context={"session_id": "s1", "files": []},
+                context={
+                    "session_id": "s1",
+                    "files": [],
+                    "session_state": state_view,
+                },
             )
 
         state = self.service.get_session_state("s1", "dataset")
         self.assertEqual(first["status"], "success")
         self.assertEqual(second["status"], "success")
         self.assertTrue(state["path"].endswith(".csv"))
-        self.assertEqual(legacy_cache, {})
 
 
 if __name__ == "__main__":

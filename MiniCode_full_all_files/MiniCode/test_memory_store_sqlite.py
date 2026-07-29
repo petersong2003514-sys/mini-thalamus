@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from memory_db import MemoryDatabase
-from memory_store import MemoryStore
+from memory_store import MemoryStore, TurnStateError
 from session_manager import SessionManager
 
 
@@ -51,6 +51,32 @@ class MemoryStoreSQLiteTests(unittest.TestCase):
         self.assertEqual([turn.sequence_no for turn in restored], [1, 2])
         self.assertEqual(first.status, "success")
         self.assertEqual(second.tags, ("报告", "中文"))
+
+    def test_terminal_turn_cannot_be_rewritten_after_promotion(self):
+        turn = self._turn()
+        self.store.promote_memory(
+            user_id="alice",
+            source_turn_id=turn.turn_id,
+            namespace="preference",
+            memory_key="language",
+            gist="Chinese",
+            source_agent="report_writer",
+            activate=True,
+        )
+
+        with self.assertRaises(TurnStateError):
+            self.store.complete_turn(
+                turn.turn_id,
+                answer="late failure",
+                agent_id="report_writer",
+                status="error",
+            )
+
+        self.assertEqual(self.store.get_turn(turn.turn_id).status, "success")
+        self.assertEqual(
+            self.store.lookup_long_term("alice")[0].gist,
+            "Chinese",
+        )
 
     def test_active_memory_is_user_isolated_and_versioned(self):
         turn = self._turn()

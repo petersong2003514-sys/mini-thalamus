@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from memory_service import MemoryService
-from orchestrator import Orchestrator
+from orchestrator import MultiStepOrchestrator, Orchestrator
 from route_schema import RouteDecision
 
 
@@ -59,6 +59,9 @@ class FakeRegistry:
 
     def get_capabilities(self, agent_id):
         return dict(SPECS[agent_id]["capabilities"])
+
+    def list_all(self):
+        return {key: dict(value) for key, value in SPECS.items()}
 
 
 class FakeRouter:
@@ -193,6 +196,37 @@ class MemoryWorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(web_memory["long_term"], {})
         self.assertIn("第一轮销售报告", report_memory["conversation_history"])
         self.assertEqual(report_memory["long_term"]["language"], "中文")
+
+
+    def test_legacy_process_chain_uses_durable_memory_lifecycle(self):
+        service = MemoryService.for_path(
+            self.db_path,
+            data_root=self.temp_dir.name,
+        )
+        orchestrator = MultiStepOrchestrator(
+            runtime=self.runtime,
+            registry=self.registry,
+            router=FakeRouter(),
+            execution_policy=lambda route_call, spec: {
+                "action": "allow",
+                "risk_level": "none",
+                "requires_approval": False,
+                "sandboxed": False,
+                "reason": "test",
+            },
+            memory_service=service,
+        )
+
+        result = orchestrator.process_chain(
+            "Write a durable report",
+            ["report_writer"],
+            user_id="alice",
+        )
+
+        turns = service.store.list_turns(result["session_id"])
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0].status, "success")
+        self.assertIn("memory", self.report.contexts[-1])
 
 
 if __name__ == "__main__":

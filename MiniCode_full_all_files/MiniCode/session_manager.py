@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import json
 import os
+import sqlite3
 import time
 import uuid
 
 from memory_db import MemoryDatabase
+from session_identity import validate_session_id
 
 
 class SessionOwnershipError(PermissionError):
@@ -154,9 +156,16 @@ class SessionManager:
         session_id: str = None,
     ) -> Session:
         sid = session_id or uuid.uuid4().hex[:8]
+        validate_session_id(sid)
         session = Session(session_id=sid, user_id=user_id)
+        try:
+            self._insert_new(session)
+        except sqlite3.IntegrityError:
+            row = self._load_row(sid)
+            if row is None or row["user_id"] != user_id:
+                raise SessionOwnershipError(sid)
+            session = Session.from_record(row)
         self._sessions[sid] = session
-        self.save(session)
         return session
 
     def get(self, session_id: str) -> Optional[Session]:
@@ -167,6 +176,7 @@ class SessionManager:
 
     def resolve(self, user_id: str, session_id: str = None) -> Session:
         sid = session_id or uuid.uuid4().hex[:8]
+        validate_session_id(sid)
         cached = self._sessions.get(sid)
         if cached is not None:
             if cached.user_id != user_id:
@@ -182,12 +192,44 @@ class SessionManager:
             return session
         return self.create(user_id, sid)
 
+    def _insert_new(self, session: Session):
+        payload = session.to_dict()
+        with self.database.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    session_id, user_id, summary, recent_messages_json,
+                    last_result_json, agent_history_json,
+                    max_context_tokens, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    session.user_id,
+                    session.summary,
+                    json.dumps(payload["messages"], ensure_ascii=False),
+                    (
+                        json.dumps(
+                            payload["last_result"],
+                            ensure_ascii=False,
+                        )
+                        if payload["last_result"] is not None
+                        else None
+                    ),
+                    json.dumps(
+                        payload["agent_history"],
+                        ensure_ascii=False,
+                    ),
+                    int(payload["max_context_tokens"]),
+                    float(session.created_at),
+                    time.time(),
+                ),
+            )
+
     def save(self, session: Session, conn=None):
-        """Persist a complete session, optionally in a caller transaction."""
+        """Update a session without permitting ownership changes."""
         payload = session.to_dict()
         parameters = (
-            session.session_id,
-            session.user_id,
             session.summary,
             json.dumps(payload["messages"], ensure_ascii=False),
             (
@@ -197,31 +239,37 @@ class SessionManager:
             ),
             json.dumps(payload["agent_history"], ensure_ascii=False),
             int(payload["max_context_tokens"]),
-            float(session.created_at),
             time.time(),
+            session.session_id,
+            session.user_id,
         )
         statement = """
-            INSERT INTO sessions (
-                session_id, user_id, summary, recent_messages_json,
-                last_result_json, agent_history_json, max_context_tokens,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-                user_id=excluded.user_id,
-                summary=excluded.summary,
-                recent_messages_json=excluded.recent_messages_json,
-                last_result_json=excluded.last_result_json,
-                agent_history_json=excluded.agent_history_json,
-                max_context_tokens=excluded.max_context_tokens,
-                updated_at=excluded.updated_at
+            UPDATE sessions
+            SET summary=?, recent_messages_json=?, last_result_json=?,
+                agent_history_json=?, max_context_tokens=?, updated_at=?
+            WHERE session_id=? AND user_id=?
         """
+
+        def update(active):
+            cursor = active.execute(statement, parameters)
+            if cursor.rowcount == 1:
+                return
+            row = active.execute(
+                "SELECT user_id FROM sessions WHERE session_id=?",
+                (session.session_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown session: {session.session_id}")
+            raise SessionOwnershipError(session.session_id)
+
         if conn is not None:
-            conn.execute(statement, parameters)
+            update(conn)
             return
         with self.database.transaction() as owned:
-            owned.execute(statement, parameters)
+            update(owned)
 
     def _load_row(self, session_id: str):
+        validate_session_id(session_id)
         with self.database.connection() as conn:
             return conn.execute(
                 "SELECT * FROM sessions WHERE session_id=?",

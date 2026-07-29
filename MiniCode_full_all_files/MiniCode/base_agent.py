@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import json
 from typing import List, Optional
 
 
@@ -70,6 +71,50 @@ class AgentContext:
                 for key, value in self.long_term.items()
             )
             parts.append(memories)
+        return "\n\n".join(part for part in parts if part)
+
+    def render_for_agent(self) -> str:
+        """Render structured memory for Agents that only consume query text."""
+        parts = []
+        if self.current_query:
+            parts.append(f"[Current task]\n{self.current_query}")
+        if self.tags:
+            parts.append(f"[Memory tags]\n{', '.join(self.tags)}")
+        if self.relevant_history:
+            history = "\n---\n".join(
+                f"Q: {item.get('q', '')[:80]}\n"
+                f"A: {item.get('a', '')[:150]}"
+                for item in self.relevant_history[-3:]
+            )
+            parts.append(f"[Relevant history]\n{history}")
+        if self.conversation_history:
+            parts.append(
+                f"[Conversation context]\n{self.conversation_history}"
+            )
+        if self.long_term:
+            memories = "\n".join(
+                f"{key}: {value}"
+                for key, value in self.long_term.items()
+            )
+            parts.append(f"[Verified long-term memory]\n{memories}")
+        if self.previous_result is not None:
+            parts.append(
+                "[Previous workflow result]\n"
+                + json.dumps(
+                    self.previous_result,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+        if self.workflow_inputs:
+            parts.append(
+                "[Resolved workflow inputs]\n"
+                + json.dumps(
+                    self.workflow_inputs,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
         return "\n\n".join(part for part in parts if part)
 
     def to_dict(self) -> dict:

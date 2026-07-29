@@ -2,7 +2,7 @@
 
 import time
 
-from base_agent import AgentResult
+from base_agent import AgentContext, AgentResult
 from route_schema import RouteDecision
 
 
@@ -129,8 +129,14 @@ class WorkflowExecutor:
                 attempt += 1
                 try:
                     agent = self.runtime.get_agent(route_call.function.name)
+                    agent_query = route_call.function.arguments["instruction"]
+                    memory_payload = run_context.get("memory")
+                    if isinstance(memory_payload, dict):
+                        agent_query = AgentContext.from_dict(
+                            memory_payload
+                        ).render_for_agent()
                     raw_result = agent.run(
-                        route_call.function.arguments["instruction"],
+                        agent_query,
                         context=run_context,
                     )
                     result = self._normalize_result(
