@@ -14,7 +14,10 @@
   ctx = store.get_context(sid, current_query)  # 给上下文窗口用的紧凑摘要
   full = store.lookup(sid, "天气")             # 按标签查找完整记录
 """
-import os, json, time, re, threading
+import os, json, time, re, threading, uuid
+from dataclasses import dataclass
+
+from memory_db import MemoryDatabase
 from typing import Optional
 
 DATA_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -23,11 +26,46 @@ MAX_HISTORY_TURNS = 50  # 每 session 最多保留轮次
 CONTEXT_MAX_CHARS = 500  # 上下文窗口最大字符
 
 
+@dataclass(frozen=True)
+class TurnRecord:
+    turn_id: str
+    session_id: str
+    user_id: str
+    sequence_no: int
+    query: str
+    answer: str = ""
+    agent_id: Optional[str] = None
+    status: str = "running"
+    tags: tuple = ()
+    trace_id: Optional[str] = None
+    created_at: float = 0.0
+    completed_at: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class LongTermMemory:
+    memory_id: str
+    user_id: str
+    namespace: str
+    memory_key: str
+    gist: str
+    source_session_id: str
+    source_turn_id: str
+    source_agent: Optional[str]
+    status: str
+    version: int
+    created_at: float
+    updated_at: float
+
+
 class MemoryStore:
     """统一记忆存储：文件持久化 + 标签索引"""
 
-    def __init__(self, data_root: str = None, clean_sessions_on_start: bool = False):
+    def __init__(self, data_root: str = None, clean_sessions_on_start: bool = False,
+                 database: MemoryDatabase = None):
         self.root = data_root or DATA_ROOT
+        self.database = database or MemoryDatabase(os.path.join(self.root, "agent_memory.db"))
+        self.database.initialize()
         os.makedirs(self.root, exist_ok=True)
         self._session_locks: dict = {}   # sid → threading.Lock，保护同 session 的读写竞态
         self._session_locks_lock = threading.Lock()  # 保护 _session_locks dict 本身
@@ -90,8 +128,6 @@ class MemoryStore:
                 history = history[-MAX_HISTORY_TURNS:]
             self._save_history(sid, history)
             self._update_context(sid, history)
-        # 长期记忆沉淀在锁外执行，避免持锁时做 LLM 调用
-        self._try_crystallize_ltm(turn)
         return turn["id"]
 
     def _try_crystallize_ltm(self, turn: dict):
@@ -506,6 +542,574 @@ class MemoryStore:
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         })
 
+
+
+    @staticmethod
+    def _turn_from_row(row) -> TurnRecord:
+        return TurnRecord(
+            turn_id=row["turn_id"],
+            session_id=row["session_id"],
+            user_id=row["user_id"],
+            sequence_no=int(row["sequence_no"]),
+            query=row["query"],
+            answer=row["answer"] or "",
+            agent_id=row["agent_id"],
+            status=row["status"],
+            tags=tuple(json.loads(row["tags_json"] or "[]")),
+            trace_id=row["trace_id"],
+            created_at=float(row["created_at"]),
+            completed_at=(
+                float(row["completed_at"])
+                if row["completed_at"] is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _memory_from_row(row) -> LongTermMemory:
+        return LongTermMemory(
+            memory_id=row["memory_id"],
+            user_id=row["user_id"],
+            namespace=row["namespace"],
+            memory_key=row["memory_key"],
+            gist=row["gist"],
+            source_session_id=row["source_session_id"],
+            source_turn_id=row["source_turn_id"],
+            source_agent=row["source_agent"],
+            status=row["status"],
+            version=int(row["version"]),
+            created_at=float(row["created_at"]),
+            updated_at=float(row["updated_at"]),
+        )
+
+    def create_turn(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        query: str,
+        trace_id: str = None,
+        conn=None,
+    ) -> TurnRecord:
+        def insert(active):
+            owner = active.execute(
+                "SELECT user_id FROM sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if owner is None:
+                raise KeyError(f"unknown session: {session_id}")
+            if owner["user_id"] != user_id:
+                raise PermissionError("session owner mismatch")
+            sequence = active.execute(
+                """
+                SELECT COALESCE(MAX(sequence_no), 0) + 1
+                FROM turns WHERE session_id=?
+                """,
+                (session_id,),
+            ).fetchone()[0]
+            now = time.time()
+            turn_id = f"{session_id}:{int(sequence)}:{uuid.uuid4().hex[:8]}"
+            active.execute(
+                """
+                INSERT INTO turns (
+                    turn_id, session_id, user_id, sequence_no, query,
+                    answer, agent_id, status, tags_json, trace_id,
+                    created_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, '', NULL, 'running', '[]', ?, ?, NULL)
+                """,
+                (
+                    turn_id,
+                    session_id,
+                    user_id,
+                    int(sequence),
+                    query,
+                    trace_id,
+                    now,
+                ),
+            )
+            return self._turn_from_row(
+                active.execute(
+                    "SELECT * FROM turns WHERE turn_id=?",
+                    (turn_id,),
+                ).fetchone()
+            )
+
+        if conn is not None:
+            return insert(conn)
+        with self.database.transaction() as owned:
+            return insert(owned)
+
+    def complete_turn(
+        self,
+        turn_id: str,
+        *,
+        answer: str,
+        agent_id: str,
+        status: str,
+        tags: list = None,
+        conn=None,
+    ) -> TurnRecord:
+        allowed = {"success", "error", "checkpoint", "interrupted"}
+        if status not in allowed:
+            raise ValueError(f"invalid terminal turn status: {status}")
+
+        def update(active):
+            cursor = active.execute(
+                """
+                UPDATE turns
+                SET answer=?, agent_id=?, status=?, tags_json=?, completed_at=?
+                WHERE turn_id=?
+                """,
+                (
+                    answer,
+                    agent_id,
+                    status,
+                    json.dumps(tags or [], ensure_ascii=False),
+                    time.time(),
+                    turn_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown turn: {turn_id}")
+            return self._turn_from_row(
+                active.execute(
+                    "SELECT * FROM turns WHERE turn_id=?",
+                    (turn_id,),
+                ).fetchone()
+            )
+
+        if conn is not None:
+            return update(conn)
+        with self.database.transaction() as owned:
+            return update(owned)
+
+    def get_turn(self, turn_id: str) -> Optional[TurnRecord]:
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM turns WHERE turn_id=?",
+                (turn_id,),
+            ).fetchone()
+        return self._turn_from_row(row) if row is not None else None
+
+    def list_turns(
+        self,
+        session_id: str,
+        *,
+        statuses: tuple = None,
+        limit: int = None,
+    ) -> list:
+        parameters = [session_id]
+        where = "session_id=?"
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            where += f" AND status IN ({placeholders})"
+            parameters.extend(statuses)
+        sql = f"SELECT * FROM turns WHERE {where} ORDER BY sequence_no"
+        if limit is not None:
+            sql += " LIMIT ?"
+            parameters.append(int(limit))
+        with self.database.connection() as conn:
+            rows = conn.execute(sql, parameters).fetchall()
+        return [self._turn_from_row(row) for row in rows]
+
+    def promote_memory(
+        self,
+        *,
+        user_id: str,
+        source_turn_id: str,
+        namespace: str,
+        memory_key: str,
+        gist: str,
+        source_agent: str,
+        activate: bool,
+        conn=None,
+    ) -> LongTermMemory:
+        def promote(active):
+            source = active.execute(
+                "SELECT * FROM turns WHERE turn_id=?",
+                (source_turn_id,),
+            ).fetchone()
+            if source is None:
+                raise KeyError(f"unknown source turn: {source_turn_id}")
+            if source["user_id"] != user_id:
+                raise PermissionError("source turn owner mismatch")
+            if source["status"] != "success":
+                raise ValueError("only successful turns may be promoted")
+
+            version = active.execute(
+                """
+                SELECT COALESCE(MAX(version), 0) + 1
+                FROM long_term_memories
+                WHERE user_id=? AND namespace=? AND memory_key=?
+                """,
+                (user_id, namespace, memory_key),
+            ).fetchone()[0]
+            status = "active" if activate else "pending"
+            if status == "active":
+                active.execute(
+                    """
+                    UPDATE long_term_memories
+                    SET status='superseded', updated_at=?
+                    WHERE user_id=? AND namespace=? AND memory_key=?
+                      AND status='active'
+                    """,
+                    (time.time(), user_id, namespace, memory_key),
+                )
+            now = time.time()
+            memory_id = f"mem_{uuid.uuid4().hex}"
+            active.execute(
+                """
+                INSERT INTO long_term_memories (
+                    memory_id, user_id, namespace, memory_key, gist,
+                    source_session_id, source_turn_id, source_agent,
+                    status, version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    memory_id,
+                    user_id,
+                    namespace,
+                    memory_key,
+                    gist,
+                    source["session_id"],
+                    source_turn_id,
+                    source_agent,
+                    status,
+                    int(version),
+                    now,
+                    now,
+                ),
+            )
+            return self._memory_from_row(
+                active.execute(
+                    "SELECT * FROM long_term_memories WHERE memory_id=?",
+                    (memory_id,),
+                ).fetchone()
+            )
+
+        if conn is not None:
+            return promote(conn)
+        with self.database.transaction() as owned:
+            return promote(owned)
+
+    def lookup_long_term(
+        self,
+        user_id: str,
+        *,
+        statuses: tuple = ("active",),
+        namespace: str = None,
+        memory_keys: list = None,
+        limit: int = 50,
+    ) -> list:
+        where = ["user_id=?"]
+        parameters = [user_id]
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            where.append(f"status IN ({placeholders})")
+            parameters.extend(statuses)
+        if namespace:
+            where.append("namespace=?")
+            parameters.append(namespace)
+        if memory_keys:
+            placeholders = ",".join("?" for _ in memory_keys)
+            where.append(f"memory_key IN ({placeholders})")
+            parameters.extend(memory_keys)
+        parameters.append(int(limit))
+        sql = (
+            "SELECT * FROM long_term_memories WHERE "
+            + " AND ".join(where)
+            + " ORDER BY updated_at DESC LIMIT ?"
+        )
+        with self.database.connection() as conn:
+            rows = conn.execute(sql, parameters).fetchall()
+        return [self._memory_from_row(row) for row in rows]
+
+    def set_session_state(
+        self,
+        session_id: str,
+        state_key: str,
+        value,
+        *,
+        conn=None,
+    ):
+        encoded = json.dumps(value, ensure_ascii=False)
+        statement = """
+            INSERT INTO session_state(session_id, state_key, value_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(session_id, state_key) DO UPDATE SET
+                value_json=excluded.value_json,
+                updated_at=excluded.updated_at
+        """
+        parameters = (session_id, state_key, encoded, time.time())
+        if conn is not None:
+            conn.execute(statement, parameters)
+            return
+        with self.database.transaction() as owned:
+            owned.execute(statement, parameters)
+
+    def get_session_state(self, session_id: str, state_key: str, default=None):
+        with self.database.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT value_json FROM session_state
+                WHERE session_id=? AND state_key=?
+                """,
+                (session_id, state_key),
+            ).fetchone()
+        return json.loads(row["value_json"]) if row is not None else default
+
+    @staticmethod
+    def _legacy_file_marker(path: str) -> tuple:
+        absolute = os.path.normcase(os.path.abspath(path))
+        stat = os.stat(path)
+        key = f"legacy_import:{absolute}"
+        value = f"{stat.st_size}:{stat.st_mtime_ns}"
+        return key, value
+
+    @staticmethod
+    def _legacy_file_imported(conn, marker_key: str, marker_value: str) -> bool:
+        row = conn.execute(
+            "SELECT value FROM schema_meta WHERE key=?",
+            (marker_key,),
+        ).fetchone()
+        return row is not None and row["value"] == marker_value
+
+    @staticmethod
+    def _mark_legacy_file(conn, marker_key: str, marker_value: str):
+        conn.execute(
+            """
+            INSERT INTO schema_meta(key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
+            (marker_key, marker_value),
+        )
+
+    def migrate_legacy_json(self, legacy_root: str) -> dict:
+        """Import legacy JSON once while quarantining unowned global memory."""
+        result = {"sessions": 0, "turns": 0, "memories": 0, "files": 0}
+        sessions_root = os.path.join(legacy_root, "sessions")
+        session_dirs = []
+        if os.path.isdir(sessions_root):
+            session_dirs = [
+                os.path.join(sessions_root, name)
+                for name in sorted(os.listdir(sessions_root))
+                if os.path.isdir(os.path.join(sessions_root, name))
+            ]
+
+        for session_dir in session_dirs:
+            path = os.path.join(session_dir, "session.json")
+            if not os.path.isfile(path):
+                continue
+            marker_key, marker_value = self._legacy_file_marker(path)
+            data = self._load_json(path)
+            if not isinstance(data, dict):
+                continue
+            with self.database.transaction() as conn:
+                if self._legacy_file_imported(conn, marker_key, marker_value):
+                    continue
+                sid = data.get("session_id") or os.path.basename(session_dir)
+                user_id = data.get("user_id") or "legacy_import"
+                now = time.time()
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO sessions (
+                        session_id, user_id, summary, recent_messages_json,
+                        last_result_json, agent_history_json,
+                        max_context_tokens, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        sid,
+                        user_id,
+                        data.get("summary", ""),
+                        json.dumps(data.get("messages", []), ensure_ascii=False),
+                        (
+                            json.dumps(
+                                data.get("last_result"),
+                                ensure_ascii=False,
+                            )
+                            if data.get("last_result") is not None
+                            else None
+                        ),
+                        json.dumps(
+                            data.get("agent_history", []),
+                            ensure_ascii=False,
+                        ),
+                        int(data.get("max_context_tokens", 8000)),
+                        float(data.get("created_at", now)),
+                        now,
+                    ),
+                )
+                result["sessions"] += max(0, cursor.rowcount)
+                self._mark_legacy_file(conn, marker_key, marker_value)
+                result["files"] += 1
+
+        for session_dir in session_dirs:
+            path = os.path.join(session_dir, "history.json")
+            if not os.path.isfile(path):
+                continue
+            marker_key, marker_value = self._legacy_file_marker(path)
+            data = self._load_json(path)
+            if not isinstance(data, dict):
+                continue
+            with self.database.transaction() as conn:
+                if self._legacy_file_imported(conn, marker_key, marker_value):
+                    continue
+                sid = data.get("session_id") or os.path.basename(session_dir)
+                owner = conn.execute(
+                    "SELECT user_id FROM sessions WHERE session_id=?",
+                    (sid,),
+                ).fetchone()
+                if owner is None:
+                    now = time.time()
+                    conn.execute(
+                        """
+                        INSERT INTO sessions (
+                            session_id, user_id, summary,
+                            recent_messages_json, last_result_json,
+                            agent_history_json, max_context_tokens,
+                            created_at, updated_at
+                        ) VALUES (?, 'legacy_import', '', '[]', NULL, '[]',
+                                  8000, ?, ?)
+                        """,
+                        (sid, now, now),
+                    )
+                    user_id = "legacy_import"
+                    result["sessions"] += 1
+                else:
+                    user_id = owner["user_id"]
+
+                for legacy_turn in data.get("turns", []):
+                    legacy_id = str(legacy_turn.get("id", "turn"))
+                    turn_id = f"legacy:{sid}:{legacy_id}"
+                    exists = conn.execute(
+                        "SELECT 1 FROM turns WHERE turn_id=?",
+                        (turn_id,),
+                    ).fetchone()
+                    if exists is not None:
+                        continue
+                    sequence = conn.execute(
+                        """
+                        SELECT COALESCE(MAX(sequence_no), 0) + 1
+                        FROM turns WHERE session_id=?
+                        """,
+                        (sid,),
+                    ).fetchone()[0]
+                    created = float(legacy_turn.get("ts", time.time()))
+                    conn.execute(
+                        """
+                        INSERT INTO turns (
+                            turn_id, session_id, user_id, sequence_no,
+                            query, answer, agent_id, status, tags_json,
+                            trace_id, created_at, completed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'success', ?, NULL, ?, ?)
+                        """,
+                        (
+                            turn_id,
+                            sid,
+                            user_id,
+                            int(sequence),
+                            legacy_turn.get("q", ""),
+                            legacy_turn.get("a", ""),
+                            legacy_turn.get("agent"),
+                            json.dumps(
+                                legacy_turn.get("tags", []),
+                                ensure_ascii=False,
+                            ),
+                            created,
+                            created,
+                        ),
+                    )
+                    result["turns"] += 1
+                self._mark_legacy_file(conn, marker_key, marker_value)
+                result["files"] += 1
+
+        memory_path = os.path.join(legacy_root, "memory.json")
+        if os.path.isfile(memory_path):
+            marker_key, marker_value = self._legacy_file_marker(memory_path)
+            data = self._load_json(memory_path)
+            if isinstance(data, dict):
+                with self.database.transaction() as conn:
+                    if not self._legacy_file_imported(
+                        conn,
+                        marker_key,
+                        marker_value,
+                    ):
+                        now = time.time()
+                        conn.execute(
+                            """
+                            INSERT OR IGNORE INTO sessions (
+                                session_id, user_id, summary,
+                                recent_messages_json, last_result_json,
+                                agent_history_json, max_context_tokens,
+                                created_at, updated_at
+                            ) VALUES (
+                                'legacy-memory', 'legacy_import', '', '[]',
+                                NULL, '[]', 8000, ?, ?
+                            )
+                            """,
+                            (now, now),
+                        )
+                        conn.execute(
+                            """
+                            INSERT OR IGNORE INTO turns (
+                                turn_id, session_id, user_id, sequence_no,
+                                query, answer, agent_id, status, tags_json,
+                                trace_id, created_at, completed_at
+                            ) VALUES (
+                                'legacy-memory:source', 'legacy-memory',
+                                'legacy_import', 1, 'legacy import',
+                                'legacy import', 'migration', 'success',
+                                '[]', NULL, ?, ?
+                            )
+                            """,
+                            (now, now),
+                        )
+                        for key, wrapped in data.get("entries", {}).items():
+                            value = wrapped.get("value", wrapped)
+                            gist = (
+                                value.get("gist", "")
+                                if isinstance(value, dict)
+                                else str(value)
+                            )
+                            memory_id = "legacy_" + uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                str(key),
+                            ).hex
+                            cursor = conn.execute(
+                                """
+                                INSERT OR IGNORE INTO long_term_memories (
+                                    memory_id, user_id, namespace,
+                                    memory_key, gist, source_session_id,
+                                    source_turn_id, source_agent, status,
+                                    version, created_at, updated_at
+                                ) VALUES (
+                                    ?, 'legacy_import', 'legacy', ?, ?,
+                                    'legacy-memory', 'legacy-memory:source',
+                                    ?, 'pending', 1, ?, ?
+                                )
+                                """,
+                                (
+                                    memory_id,
+                                    str(key),
+                                    gist,
+                                    (
+                                        value.get("agent")
+                                        if isinstance(value, dict)
+                                        else None
+                                    ),
+                                    now,
+                                    now,
+                                ),
+                            )
+                            result["memories"] += max(0, cursor.rowcount)
+                        self._mark_legacy_file(
+                            conn,
+                            marker_key,
+                            marker_value,
+                        )
+                        result["files"] += 1
+        return result
 
 # ─── 全局单例 ───
 _store: Optional[MemoryStore] = None
