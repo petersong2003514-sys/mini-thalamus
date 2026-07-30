@@ -2,6 +2,28 @@
 import os
 
 
+PROJECT_ROOT = os.path.dirname(__file__)
+
+
+def _load_env_file(path: str) -> None:
+    """Load simple KEY=VALUE pairs without overriding existing env vars."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_env_file(os.path.join(PROJECT_ROOT, ".env"))
+
+
 def _resolve_deepseek_key() -> str:
     """优先级链：env 变量 → CredentialStore → 空字符串。每次调用都重新解析，支持运行时写入凭证。"""
     key = os.getenv("DEEPSEEK_API_KEY", "")
@@ -24,8 +46,8 @@ def _resolve_deepseek_key() -> str:
 # 运行时调用方应使用 get_llm_config() 获取带实时 key 的副本。
 LLM_CONFIG = {
     "api_key": _resolve_deepseek_key(),
-    "base_url": "https://api.deepseek.com/v1",
-    "model": "deepseek-chat",
+    "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+    "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
     "temperature": 0.1,
     "max_tokens": 2048,
 }
@@ -46,7 +68,12 @@ def get_llm_config() -> dict:
     每次调用都重新从 env/CredentialStore 解析 key，
     避免启动时 key 为空、UI 写入后仍用旧值的问题。
     """
-    return {**LLM_CONFIG, "api_key": _resolve_deepseek_key()}
+    return {
+        **LLM_CONFIG,
+        "api_key": _resolve_deepseek_key(),
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", LLM_CONFIG["base_url"]),
+        "model": os.getenv("DEEPSEEK_MODEL", LLM_CONFIG["model"]),
+    }
 
 
 # ─── Cascaded Router thresholds ───
