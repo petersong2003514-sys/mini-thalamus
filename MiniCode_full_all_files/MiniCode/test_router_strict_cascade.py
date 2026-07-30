@@ -112,6 +112,32 @@ class RouterStrictCascadeTests(unittest.TestCase):
         self.assertEqual(len(decision.metadata["attempts"]), 2)
         self.assertIn("validation_errors", llm_calls[1])
 
+
+    def test_strict_cascade_combines_semantic_and_lexical_candidates(self):
+        llm_calls = []
+
+        def llm_router(**kwargs):
+            llm_calls.append(kwargs)
+            return single_payload("report_writer")
+
+        router = Router(
+            registry=FakeRegistry(),
+            semantic_matcher=FakeSemanticMatcher([
+                {"agent_id": "nl2sql", "score": 0.9, "evidence": "semantic"},
+            ]),
+            llm_router=llm_router,
+            top_k=1,
+        )
+
+        router.route_decision(
+            "query sales orders then write report",
+            strict_cascade=True,
+        )
+
+        candidate_ids = [item["agent_id"] for item in llm_calls[0]["candidates"]]
+        self.assertIn("nl2sql", candidate_ids)
+        self.assertIn("report_writer", candidate_ids)
+
     def test_single_file_action_with_and_is_not_compound(self):
         self.assertFalse(
             _is_compound_intent(

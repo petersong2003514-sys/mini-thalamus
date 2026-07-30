@@ -180,14 +180,26 @@ class Router:
         llm_candidates = rule_candidates + [
             item for item in semantic_candidates if item["agent_id"] not in seen
         ]
+        seen = {item["agent_id"] for item in llm_candidates}
+        lexical_limit = 6 if strict_cascade else self.top_k
+        lexical_candidates = self._lexical_candidates(
+            user_message,
+            specs,
+            limit=lexical_limit,
+        )
+        if strict_cascade:
+            llm_candidates.extend(
+                item for item in lexical_candidates if item["agent_id"] not in seen
+            )
         if not llm_candidates:
-            llm_candidates = self._lexical_candidates(user_message, specs)
+            llm_candidates = lexical_candidates
+        candidate_limit = 6 if strict_cascade else self.top_k
 
         llm_decision = self._route_with_llm_retries(
             query=user_message,
             context=session_context,
             file_context=file_context,
-            candidates=llm_candidates[: self.top_k],
+            candidates=llm_candidates[: candidate_limit],
             specs=specs,
             trace_id=trace_id,
             max_attempts=max_route_attempts if strict_cascade else 1,
@@ -396,7 +408,7 @@ class Router:
             >= self.semantic_margin
         )
 
-    def _lexical_candidates(self, query: str, specs: dict) -> list[dict]:
+    def _lexical_candidates(self, query: str, specs: dict, limit: int = None) -> list[dict]:
         lowered = query.lower()
         scored = []
         for agent_id, spec in specs.items():
@@ -414,8 +426,9 @@ class Router:
                 "score": score,
                 "evidence": "candidate_prefilter",
             })
+        result_limit = self.top_k if limit is None else max(1, int(limit))
         return sorted(scored, key=lambda item: (-item["score"], item["agent_id"]))[
-            : self.top_k
+            : result_limit
         ]
 
     def _call_llm_router(
