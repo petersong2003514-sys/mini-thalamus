@@ -5,6 +5,7 @@ import unittest
 
 from router_eval import (
     UnavailableSemanticMatcher,
+    _cascade_predictor,
     skipped_report,
     _rule_predictor,
     evaluate_cases,
@@ -54,6 +55,21 @@ class FakeDecision:
 
 
 class RouterEvalRunnerTests(unittest.TestCase):
+    def test_cascade_predictor_can_request_strict_cascade(self):
+        class RecordingRouter:
+            def __init__(self):
+                self.strict_cascade_seen = None
+
+            def route_decision(self, query, session_context="", file_context=None, strict_cascade=False):
+                self.strict_cascade_seen = strict_cascade
+                return FakeDecision()
+
+        router = RecordingRouter()
+        predictor = _cascade_predictor(router, strict_cascade=True)
+        predictor(sample_case())
+
+        self.assertTrue(router.strict_cascade_seen)
+
     def test_all_layer_expands_in_cost_order(self):
         self.assertEqual(
             expand_layers("all"),
@@ -145,3 +161,4 @@ class RouterEvalRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

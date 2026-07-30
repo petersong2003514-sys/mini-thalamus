@@ -217,6 +217,7 @@ class RouteDecision:
     method: str
     reason: str
     trace_id: str = ""
+    metadata: dict = field(default_factory=dict)
     _agent_specs: Mapping[str, dict] = field(
         default_factory=dict,
         repr=False,
@@ -242,6 +243,7 @@ class RouteDecision:
                 "method",
                 "reason",
                 "trace_id",
+                "metadata",
             },
             "route",
         )
@@ -293,12 +295,15 @@ class RouteDecision:
         method = value["method"]
         reason = value["reason"]
         trace_id = value.get("trace_id", "")
+        metadata = value.get("metadata", {}) or {}
         if not isinstance(method, str) or not method:
             raise RouteValidationError("route.method must be a non-empty string")
         if not isinstance(reason, str):
             raise RouteValidationError("route.reason must be a string")
         if not isinstance(trace_id, str):
             raise RouteValidationError("route.trace_id must be a string")
+        if not isinstance(metadata, dict):
+            raise RouteValidationError("route.metadata must be an object")
 
         decision = cls(
             mode=mode,
@@ -311,6 +316,7 @@ class RouteDecision:
             method=method,
             reason=reason,
             trace_id=trace_id,
+            metadata=dict(metadata),
             _agent_specs=agent_specs,
         )
         decision._validate_graph()
@@ -397,6 +403,8 @@ class RouteDecision:
         }
         if self.trace_id:
             result["trace_id"] = self.trace_id
+        if self.metadata:
+            result["metadata"] = dict(self.metadata)
         return result
 
     def to_legacy_dict(self) -> dict:
@@ -421,3 +429,4 @@ class RouteDecision:
             "reason": self.reason,
             "route_decision": self.to_dict(),
         }
+

@@ -12,7 +12,7 @@ import uuid
 
 from agent_runtime import AgentRuntime
 from config import get_llm_config
-from router import _COMPOUND_PATTERN, FALLBACK_AGENT, Router
+from router import _is_compound_intent, FALLBACK_AGENT, Router
 from router_eval_dataset import dataset_fingerprint, load_cases
 from router_eval_metrics import aggregate_scores, evaluate_quality_gates, score_case
 from route_schema import RouteDecision
@@ -208,7 +208,7 @@ def _rule_predictor(router):
     def predict(case):
         started = time.perf_counter()
         agent_id, _ = router._rule_match(case.query, case.file_context, specs)
-        if _COMPOUND_PATTERN.search(case.query):
+        if _is_compound_intent(case.query):
             agent_id = None
         latency = (time.perf_counter() - started) * 1000
         return {
@@ -249,13 +249,14 @@ def _semantic_predictor(router, matcher):
     return predict
 
 
-def _cascade_predictor(router):
+def _cascade_predictor(router, strict_cascade: bool = False):
     def predict(case):
         started = time.perf_counter()
         decision = router.route_decision(
             case.query,
             session_context=case.session_context,
             file_context=case.file_context,
+            strict_cascade=strict_cascade,
         )
         return normalize_decision(decision, (time.perf_counter() - started) * 1000)
     return predict
@@ -295,6 +296,11 @@ def main(argv=None):
         action="store_true",
         help="record semantic routing as unavailable without importing its native runtime",
     )
+    parser.add_argument(
+        "--strict-cascade",
+        action="store_true",
+        help="force cascade evaluation through schema-bound LLM retry flow",
+    )
     args = parser.parse_args(argv)
 
     if args.layer == "all":
@@ -303,6 +309,8 @@ def main(argv=None):
             common.append("--live-llm")
         if args.disable_semantic:
             common.append("--disable-semantic")
+        if args.strict_cascade:
+            common.append("--strict-cascade")
         return max(main(["--layer", layer, *common]) for layer in expand_layers("all"))
 
     runtime = AgentRuntime()
@@ -324,7 +332,7 @@ def main(argv=None):
     elif args.layer == "cascade":
         llm_override = None if args.live_llm else (lambda **_: {})
         router = Router(registry=runtime.registry, semantic_matcher=matcher, llm_router=llm_override)
-        predictor = _cascade_predictor(router)
+        predictor = _cascade_predictor(router, strict_cascade=args.strict_cascade)
     else:
         llm_override = None if args.live_llm and llm_key_available else (lambda **_: {})
         router = Router(
@@ -378,6 +386,7 @@ def main(argv=None):
         "live_llm_requested": bool(args.live_llm),
         "llm_credential_available": llm_key_available,
         "semantic_disabled": bool(args.disable_semantic),
+        "strict_cascade": bool(args.strict_cascade),
         "eligible_case_count": len(eligible),
         "token_usage": None,
         "estimated_cost": None,
