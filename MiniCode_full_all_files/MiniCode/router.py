@@ -7,6 +7,7 @@ import uuid
 
 from openai import OpenAI
 
+from agent_contract import AgentContractError, normalize_agent_contract
 from config import (
     ROUTER_AGENTS,
     ROUTER_SEMANTIC_FALLBACK_THRESHOLD,
@@ -322,15 +323,6 @@ class Router:
         spec = dict(info)
         spec["id"] = agent_id
         spec.setdefault("name", agent_id)
-        spec.setdefault("description", "")
-        spec.setdefault("keywords", [])
-        spec.setdefault("intents", [])
-        spec.setdefault("examples", [])
-        spec.setdefault("capabilities", {})
-        spec.setdefault(
-            "input_schema",
-            {"required": ["instruction"], "properties": {}},
-        )
         spec.setdefault(
             "output_schema",
             {
@@ -343,7 +335,19 @@ class Router:
                 ]
             },
         )
-        return spec
+        try:
+            return normalize_agent_contract(spec, default_id=agent_id)
+        except AgentContractError:
+            _log.warning("Invalid Agent contract for %s", agent_id, exc_info=True)
+            spec.setdefault("description", "")
+            spec.setdefault("keywords", [])
+            spec.setdefault("intents", [])
+            spec.setdefault("examples", [])
+            spec.setdefault("few_shots", [])
+            spec.setdefault("requires", spec.get("input_schema", {}).get("required", []))
+            spec.setdefault("exports", spec.get("output_schema", {}).get("exports", []))
+            spec.setdefault("capabilities", {})
+            return spec
 
     def _rule_match(self, query: str, file_context: dict, specs: dict):
         explicit = _EXPLICIT_AGENT_PATTERN.search(query)
@@ -470,8 +474,9 @@ class Router:
                 "id": agent_id,
                 "description": spec.get("description", "")[:160],
                 "intents": spec.get("intents", []),
-                "examples": (spec.get("examples", []) or [])[:3],
-                "exports": spec.get("output_schema", {}).get("exports", []),
+                "few_shots": (spec.get("few_shots", []) or [])[:3],
+                "requires": spec.get("requires", []),
+                "exports": spec.get("exports", spec.get("output_schema", {}).get("exports", [])),
             }
             for agent_id, spec in candidate_specs.items()
         ]

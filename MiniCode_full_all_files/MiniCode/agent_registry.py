@@ -7,6 +7,8 @@ import os
 import threading
 from typing import Callable, Optional
 
+from agent_contract import AgentContractError, normalize_agent_contract
+
 
 _log = logging.getLogger(__name__)
 
@@ -117,41 +119,10 @@ class AgentRegistry:
 
     @staticmethod
     def _validate_meta(meta: dict, default_id: str = "") -> dict:
-        agent_id = meta.get("id") or default_id
-        if not isinstance(agent_id, str) or not agent_id:
-            raise AgentRegistryError("Agent id must be a non-empty string")
-        name = meta.get("name")
-        if not isinstance(name, str) or not name:
-            raise AgentRegistryError(f"agent '{agent_id}' requires a name")
-        description = meta.get("description", "")
-        if not isinstance(description, str):
-            raise AgentRegistryError(
-                f"agent '{agent_id}' description must be a string"
-            )
-
-        normalized = dict(meta)
-        normalized["id"] = agent_id
-        normalized["description"] = description
-        normalized.setdefault("keywords", [])
-        normalized.setdefault("intents", [])
-        normalized.setdefault("examples", [])
-        normalized.setdefault("config_namespace", agent_id)
-        normalized.setdefault(
-            "input_schema",
-            {"required": ["instruction"], "properties": {}},
-        )
-        normalized.setdefault(
-            "output_schema",
-            {
-                "exports": [
-                    "answer",
-                    "summary",
-                    "data.structured",
-                ]
-            },
-        )
-        normalized.setdefault("capabilities", {})
-        return normalized
+        try:
+            return normalize_agent_contract(meta, default_id=default_id)
+        except AgentContractError as exc:
+            raise AgentRegistryError(str(exc)) from exc
 
     @staticmethod
     def _entry(
@@ -286,6 +257,9 @@ class AgentRegistry:
                 "keywords": meta.get("keywords", []),
                 "intents": meta.get("intents", []),
                 "examples": meta.get("examples", []),
+                "few_shots": meta.get("few_shots", []),
+                "requires": meta.get("requires", []),
+                "exports": meta.get("exports", []),
                 "icon": meta.get("icon", "🔧"),
                 "source": entry.get("source", "builtin"),
                 "status": entry.get("status", "discovered"),
