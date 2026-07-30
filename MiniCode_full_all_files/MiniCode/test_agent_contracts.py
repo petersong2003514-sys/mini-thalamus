@@ -51,7 +51,7 @@ class AgentContractTests(unittest.TestCase):
     def test_converts_legacy_examples_to_few_shots_and_schema_exports(self):
         contract = normalize_agent_contract(
             {
-                "id": "rag",
+                "id": "legacy_rag",
                 "name": "RAG Agent",
                 "description": "检索知识库",
                 "intents": ["knowledge_retrieval"],
@@ -82,12 +82,50 @@ class AgentContractTests(unittest.TestCase):
         self.assertIn("nl2sql", router_config)
         for agent_id, contract in router_config.items():
             with self.subTest(agent_id=agent_id):
+                self.assertEqual(contract.get("id"), agent_id)
                 self.assertIsInstance(contract.get("description"), str)
                 self.assertIsInstance(contract.get("keywords"), list)
                 self.assertIsInstance(contract.get("intents"), list)
                 self.assertIsInstance(contract.get("few_shots"), list)
                 self.assertIsInstance(contract.get("requires"), list)
                 self.assertIsInstance(contract.get("exports"), list)
+
+    def test_core_agents_have_planner_hints(self):
+        registry = AgentRegistry()
+        registry.discover()
+        router_config = registry.get_router_config()
+        core_agents = {
+            "nl2sql",
+            "rag",
+            "code",
+            "docparse",
+            "websearch",
+            "vision",
+            "data_analyst",
+            "deep_research",
+            "report_writer",
+            "browser",
+            "url_fetch",
+            "api_caller",
+            "shell",
+        }
+
+        self.assertTrue(core_agents.issubset(router_config))
+        for agent_id in sorted(core_agents):
+            with self.subTest(agent_id=agent_id):
+                self.assertGreater(len(router_config[agent_id]["intents"]), 0)
+                self.assertGreater(len(router_config[agent_id]["few_shots"]), 0)
+
+    def test_planner_critical_exports_are_declared(self):
+        registry = AgentRegistry()
+        registry.discover()
+        router_config = registry.get_router_config()
+
+        self.assertIn("data.artifacts", router_config["code"]["exports"])
+        self.assertIn("data.artifacts", router_config["data_analyst"]["exports"])
+        self.assertIn("data.report", router_config["report_writer"]["exports"])
+        self.assertIn("sources", router_config["websearch"]["exports"])
+        self.assertIn("query_result", router_config["nl2sql"]["exports"])
 
 
 if __name__ == "__main__":

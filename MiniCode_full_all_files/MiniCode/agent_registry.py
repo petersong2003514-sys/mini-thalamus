@@ -252,6 +252,7 @@ class AgentRegistry:
                 continue
             meta = entry["meta"]
             config[agent_id] = {
+                "id": meta.get("id", agent_id),
                 "name": meta.get("name", agent_id),
                 "description": meta.get("description", ""),
                 "keywords": meta.get("keywords", []),

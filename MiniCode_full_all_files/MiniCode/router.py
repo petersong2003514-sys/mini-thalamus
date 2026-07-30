@@ -302,6 +302,13 @@ class Router:
                 continue
             existing = specs.get(agent_id, {})
             merged = dict(existing)
+            if (
+                "intents" in info
+                and "examples" not in info
+                and "few_shots" not in info
+            ):
+                merged.pop("examples", None)
+                merged.pop("few_shots", None)
             merged.update(info)
             specs[agent_id] = self._normalize_spec(agent_id, merged)
 
