@@ -127,6 +127,9 @@ class Router:
         use_llm: bool = False,
         max_steps: int = 6,
         planner=None,
+        validate: bool = False,
+        repair_llm=None,
+        max_repair_attempts: int = 3,
     ):
         """Create a structured workflow draft from the same live Agent specs.
 
@@ -138,11 +141,26 @@ class Router:
         workflow_planner = planner or WorkflowPlanner(
             agent_specs=self._agent_specs()
         )
-        return workflow_planner.plan(
+        plan = workflow_planner.plan(
             user_message,
             context=session_context,
             use_llm=use_llm,
             max_steps=max_steps,
+        )
+        if not validate:
+            return plan
+        from dag_validator import DAGValidator
+
+        validator = DAGValidator(
+            agent_specs=self._agent_specs(),
+            max_steps=max_steps,
+        )
+        return validator.validate_or_repair(
+            plan,
+            original_query=user_message,
+            repair_llm=repair_llm,
+            max_repair_attempts=max_repair_attempts,
+            use_llm=use_llm,
         )
 
     def route_decision(

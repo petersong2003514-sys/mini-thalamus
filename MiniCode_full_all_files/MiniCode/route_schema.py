@@ -376,6 +376,9 @@ class RouteDecision:
                 source_spec = self._agent_specs.get(source_agent, {})
                 output_schema = source_spec.get("output_schema", {}) or {}
                 exports = set(output_schema.get("exports", []) or [])
+                # Agent contracts expose the canonical planner exports; keep
+                # legacy output_schema exports valid for older manifests.
+                exports.update(source_spec.get("exports", []) or [])
                 if export_path not in exports:
                     raise RouteValidationError(
                         f"input_ref '{ref}' is not exported by agent '{source_agent}'"
