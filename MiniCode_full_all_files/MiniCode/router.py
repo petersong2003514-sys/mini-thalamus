@@ -119,6 +119,32 @@ class Router:
             file_context=file_context,
         ).to_legacy_dict()
 
+    def plan_workflow(
+        self,
+        user_message: str,
+        session_context: str = "",
+        *,
+        use_llm: bool = False,
+        max_steps: int = 6,
+        planner=None,
+    ):
+        """Create a structured workflow draft from the same live Agent specs.
+
+        Planning is deliberately separate from :meth:`route_decision`: the
+        returned draft still needs DAG validation/repair before execution.
+        """
+        from workflow_planner import WorkflowPlanner
+
+        workflow_planner = planner or WorkflowPlanner(
+            agent_specs=self._agent_specs()
+        )
+        return workflow_planner.plan(
+            user_message,
+            context=session_context,
+            use_llm=use_llm,
+            max_steps=max_steps,
+        )
+
     def route_decision(
         self,
         user_message: str,
