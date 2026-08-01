@@ -198,28 +198,34 @@ def _ocr_pdf(path: str):
         import pypdfium2 as pdfium
         doc = pdfium.PdfDocument(path)
         pages = len(doc)
-        for i in range(pages):
-            page = doc[i]
-            pil = page.render(scale=2).to_pil()
-            buf = _io.BytesIO()
-            pil.save(buf, format="PNG")
-            text = _ocr_image(buf.getvalue())
-            for line in text.splitlines():
-                line = line.strip()
-                if line:
-                    paragraphs.append({"page": i + 1, "text": line})
+        try:
+            for i in range(pages):
+                page = doc[i]
+                pil = page.render(scale=2).to_pil()
+                buf = _io.BytesIO()
+                pil.save(buf, format="PNG")
+                text = _ocr_image(buf.getvalue())
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line:
+                        paragraphs.append({"page": i + 1, "text": line})
+        finally:
+            doc.close()
     except ImportError:
         try:
             import fitz
             doc = fitz.open(path)
             pages = doc.page_count
-            for i in range(pages):
-                pix = doc[i].get_pixmap(dpi=150)
-                text = _ocr_image(pix.tobytes("png"))
-                for line in text.splitlines():
-                    line = line.strip()
-                    if line:
-                        paragraphs.append({"page": i + 1, "text": line})
+            try:
+                for i in range(pages):
+                    pix = doc[i].get_pixmap(dpi=150)
+                    text = _ocr_image(pix.tobytes("png"))
+                    for line in text.splitlines():
+                        line = line.strip()
+                        if line:
+                            paragraphs.append({"page": i + 1, "text": line})
+            finally:
+                doc.close()
         except ImportError:
             return None
     except Exception as exc:

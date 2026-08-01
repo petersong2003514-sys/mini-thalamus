@@ -42,12 +42,14 @@ def _init_ocr():
         return
     try:
         import easyocr
-        _r = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
+        try:
+            _r = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
+        except Exception:
+            _r = easyocr.Reader(['ch_sim'], gpu=False, verbose=False)
         class _W:
             def __init__(self, r): self._r = r
             def ocr(self, path):
-                raw = self._r.readtext(path)
-                return [[r] for r in raw] if raw else []
+                return self._r.readtext(path)
         _ocr_reader = _W(_r)
         _log.info("EasyOCR 已加载")
     except Exception as e:
