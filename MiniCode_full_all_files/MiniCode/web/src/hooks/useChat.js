@@ -196,16 +196,19 @@ function handleEvent(event, setMessages, setSessionId, setFileCache, currentStep
       })
       break
 
-    case 'status':
+    case 'status': {
+      const icon = event.subtype === 'agent_start' ? '▶' : event.subtype === 'agent_end' ? '✓' : ''
+      const line = icon ? `${icon} ${event.text}` : event.text
       setMessages(prev => {
         const next = [...prev]
         const last = { ...next[next.length - 1] }
         if (!last.statusLines) last.statusLines = []
-        last.statusLines = [...last.statusLines, event.text]
+        last.statusLines = [...last.statusLines, line]
         next[next.length - 1] = last
         return next
       })
       break
+    }
 
     case 'answer': {
       const step = event.step || 1
