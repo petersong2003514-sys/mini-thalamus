@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "example": {
+    "filesystem": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "<your-workspace>"],
       "env": {}
     }
   }

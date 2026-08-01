@@ -16,8 +16,8 @@ class MCPConfigTests(unittest.TestCase):
         loaded = manager.load_config()
 
         self.assertTrue(loaded)
-        self.assertIn("example", manager.servers)
-        self.assertEqual(manager.servers["example"].command, "npx")
+        self.assertIn("filesystem", manager.servers)
+        self.assertEqual(manager.servers["filesystem"].command, "npx")
 
     def test_missing_config_returns_false(self):
         manager = MCPClientManager("data/not_exists.json")

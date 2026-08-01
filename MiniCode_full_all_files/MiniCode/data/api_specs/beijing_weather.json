@@ -1,0 +1,8 @@
+{
+  "name": "Beijing Weather",
+  "aliases": ["北京天气", "beijing weather", "天气接口"],
+  "method": "GET",
+  "url_template": "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&current_weather=true",
+  "headers": {},
+  "params_schema": {}
+}

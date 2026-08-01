@@ -1,0 +1,8 @@
+{
+  "name": "Public IP",
+  "aliases": ["公网 IP", "我的 IP", "public ip", "ip 地址"],
+  "method": "GET",
+  "url_template": "https://api.ipify.org?format=json",
+  "headers": {},
+  "params_schema": {}
+}

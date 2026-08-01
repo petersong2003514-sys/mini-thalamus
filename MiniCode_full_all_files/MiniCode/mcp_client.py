@@ -8,7 +8,7 @@
 
 MCP 配置: data/.mcp.json (Claude Code 兼容格式)
 """
-import os, sys, json, time, re, subprocess, threading, asyncio
+import os, sys, json, time, re, shutil, subprocess, threading, asyncio
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -182,8 +182,15 @@ class _MCPConnection:
     async def connect(self):
         env = scrub_env()
         env.update(self.config.env)
+        command = self.config.command
+        if os.name == "nt" and not os.path.splitext(command)[1]:
+            resolved = shutil.which(command)
+            if not resolved:
+                resolved = shutil.which(command + ".cmd")
+            if resolved:
+                command = resolved
         self.process = subprocess.Popen(
-            [self.config.command] + self.config.args,
+            [command] + self.config.args,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, text=True, encoding="utf-8", bufsize=1,
         )
