@@ -135,6 +135,10 @@ class WebSearchAgent:
                 seen.add(q)
 
         best = []
+        provider_results = self._provider_search(query)
+        if provider_results:
+            print(f"  [WebSearch] provider -> {len(provider_results)}条")
+            return provider_results
         for attempt, q in enumerate(candidates):
             results = self._bing_search(q)
             if results:
@@ -144,6 +148,80 @@ class WebSearchAgent:
                 return results
             print(f"  [WebSearch] '{q[:40]}' → 0条")
         return best
+
+    def _provider_search(self, query: str) -> list:
+        """Use a configured stable search backend before falling back to Bing."""
+        engine = os.environ.get("SHUSHU_SEARCH_ENGINE", "").strip().lower()
+        api_key = os.environ.get("SHUSHU_SEARCH_API_KEY", "").strip()
+        searxng_url = os.environ.get("SHUSHU_SEARXNG_URL", "").strip().rstrip("/")
+        try:
+            if engine == "searxng" and searxng_url:
+                return self._provider_searxng(query, searxng_url)
+            if engine in {"tavily", "serper", "bocha"}:
+                if not api_key:
+                    return []
+                return getattr(self, "_provider_" + engine)(query, api_key)
+        except Exception as exc:
+            print(f"  [WebSearch] provider {engine or 'searxng'} failed: {exc}")
+        return []
+
+    def _provider_tavily(self, query: str, api_key: str) -> list:
+        payload = json.dumps({"api_key": api_key, "query": query, "max_results": MAX_SEARCH_RESULTS}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.tavily.com/search",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return [
+            {"title": item.get("title", ""), "url": item.get("url", ""), "snippet": item.get("content", "")}
+            for item in data.get("results", [])[:MAX_SEARCH_RESULTS]
+            if item.get("url")
+        ]
+
+    def _provider_serper(self, query: str, api_key: str) -> list:
+        payload = json.dumps({"q": query, "num": MAX_SEARCH_RESULTS}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://google.serper.dev/search",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-API-KEY": api_key},
+        )
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return [
+            {"title": item.get("title", ""), "url": item.get("link", ""), "snippet": item.get("snippet", "")}
+            for item in data.get("organic", [])[:MAX_SEARCH_RESULTS]
+            if item.get("link")
+        ]
+
+    def _provider_bocha(self, query: str, api_key: str) -> list:
+        payload = json.dumps({"query": query, "count": MAX_SEARCH_RESULTS, "summary": True}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.bochaai.com/v1/web-search",
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + api_key},
+        )
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        webpages = data.get("data", {}).get("webPages", {}).get("value", [])
+        return [
+            {"title": item.get("name", ""), "url": item.get("url", ""), "snippet": item.get("snippet", "")}
+            for item in webpages[:MAX_SEARCH_RESULTS]
+            if item.get("url")
+        ]
+
+    def _provider_searxng(self, query: str, base_url: str) -> list:
+        encoded = urllib.parse.quote(query)
+        url = f"{base_url}/search?q={encoded}&format=json"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return [
+            {"title": item.get("title", ""), "url": item.get("url", ""), "snippet": item.get("content", "")}
+            for item in data.get("results", [])[:MAX_SEARCH_RESULTS]
+            if item.get("url")
+        ]
 
     def _bing_search(self, query: str) -> list:
         """对 query 执行一次 Bing 搜索，返回 [{title, url, snippet}]"""

@@ -89,7 +89,9 @@ class ApiCallerAgent:
             else getattr(ctx, "previous_result", None)
         )
         # 1. 从 previous_result.data.operations 找 api_call 操作
-        api_op = self._find_api_op(previous_result)
+        api_op = self._spec_from_query(query)
+        if not api_op:
+            api_op = self._find_api_op(previous_result)
         # 2. 若无，用 LLM 从 query 解析
         if not api_op:
             api_op = self._parse_from_query(query)
@@ -124,6 +126,44 @@ class ApiCallerAgent:
             pass
 
         return self._execute(method, url, params, headers)
+
+    def _load_specs(self) -> dict:
+        """Load API specs from SHUSHU_API_SPECS_DIR (default MiniCode/data/api_specs)."""
+        specs_dir = os.environ.get("SHUSHU_API_SPECS_DIR", "").strip()
+        if not specs_dir:
+            specs_dir = os.path.join(_MINICODE_ROOT, "data", "api_specs")
+        specs = {}
+        if not os.path.isdir(specs_dir):
+            return specs
+        for fname in sorted(os.listdir(specs_dir)):
+            if not fname.endswith(".json"):
+                continue
+            spec_path = os.path.join(specs_dir, fname)
+            try:
+                with open(spec_path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except Exception:
+                continue
+            if not isinstance(data, dict) or not data.get("name"):
+                continue
+            specs[data["name"].lower()] = data
+            for alias in data.get("aliases", []) or []:
+                specs[str(alias).lower()] = data
+        return specs
+
+    def _spec_from_query(self, query: str) -> Optional[dict]:
+        """Match a configured API spec by name or alias in the user query."""
+        lowered = query.lower()
+        for key, spec in self._load_specs().items():
+            if key in lowered or str(spec.get("name", "")).lower() in lowered:
+                return {
+                    "url": spec.get("url_template", ""),
+                    "method": spec.get("method", "GET"),
+                    "params": {},
+                    "headers": spec.get("headers", {}) or {},
+                    "spec": spec.get("name"),
+                }
+        return None
 
     def _find_api_op(self, prev: Optional[dict]) -> Optional[dict]:
         """从 previous_result.data.operations 提取第一个 api_call。"""

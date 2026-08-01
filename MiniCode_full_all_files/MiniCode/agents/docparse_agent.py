@@ -188,6 +188,48 @@ def _parse_file(f: dict) -> dict:
 
 
 # ─── PDF 双引擎解析 + 置信度合并 ───
+def _ocr_pdf(path: str):
+    """Render scanned PDF pages and run EasyOCR when text extraction is empty."""
+    import io as _io
+    from agents.vision_agent import _ocr_image
+    paragraphs = []
+    pages = 0
+    try:
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(path)
+        pages = len(doc)
+        for i in range(pages):
+            page = doc[i]
+            pil = page.render(scale=2).to_pil()
+            buf = _io.BytesIO()
+            pil.save(buf, format="PNG")
+            text = _ocr_image(buf.getvalue())
+            for line in text.splitlines():
+                line = line.strip()
+                if line:
+                    paragraphs.append({"page": i + 1, "text": line})
+    except ImportError:
+        try:
+            import fitz
+            doc = fitz.open(path)
+            pages = doc.page_count
+            for i in range(pages):
+                pix = doc[i].get_pixmap(dpi=150)
+                text = _ocr_image(pix.tobytes("png"))
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line:
+                        paragraphs.append({"page": i + 1, "text": line})
+        except ImportError:
+            return None
+    except Exception as exc:
+        print(f"  [DocParse] OCR failed: {exc}")
+        return None
+    if not paragraphs:
+        return None
+    return {"paragraphs": paragraphs, "tables": [], "pages": pages}
+
+
 def _parse_pdf(path: str, name: str) -> dict:
     """双引擎解析：pdfplumber 优先，PyPDF2 兜底。逐段去重，避免文字重复"""
 
@@ -195,14 +237,19 @@ def _parse_pdf(path: str, name: str) -> dict:
     result_b = _try_engine("pypdf2", path)
 
     if result_a is None and result_b is None:
+        ocr = _ocr_pdf(path)
+        if ocr:
+            return _build_result(ocr, "OCR")
         return {"error": f"{name}: 无法读取内容，可能是扫描件（图片型PDF），请文字版或直接粘贴内容",
                 "paragraphs": [], "tables": [], "pages": 0}
 
-    # pdfplumber 成功 → 直接用（排版更好，不容易出乱码）
+    selected = result_a if result_a is not None else result_b
+    if selected and not selected.get("paragraphs"):
+        ocr = _ocr_pdf(path)
+        if ocr:
+            return _build_result(ocr, "OCR")
     if result_a is not None:
         return _build_result(result_a, "pdfplumber")
-
-    # pdfplumber 失败 → PyPDF2 兜底
     return _build_result(result_b, "PyPDF2(兜底)")
 
 

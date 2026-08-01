@@ -1,0 +1,10 @@
+{
+  "name": "GitHub User",
+  "aliases": ["github user", "github 用户", "gh user"],
+  "method": "GET",
+  "url_template": "https://api.github.com/users/octocat",
+  "headers": {},
+  "params_schema": {
+    "username": "string"
+  }
+}
