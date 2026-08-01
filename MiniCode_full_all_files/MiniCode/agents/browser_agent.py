@@ -90,11 +90,22 @@ class BrowserAgent:
             executable = os.environ.get("SHUSHU_CHROMIUM_PATH", "")
             if not executable:
                 import glob as _glob
-                matches = _glob.glob(os.path.expandvars(
-                    r"%LOCALAPPDATA%\ms-playwright\chromium-*\chrome-win64\chrome.exe"
-                ))
-                if matches:
-                    executable = matches[0]
+                search_roots = [
+                    os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
+                    os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright"),
+                ]
+                for root in search_roots:
+                    if not root:
+                        continue
+                    matches = _glob.glob(os.path.join(
+                        root,
+                        "chromium-*",
+                        "chrome-win64",
+                        "chrome.exe",
+                    ))
+                    if matches:
+                        executable = matches[0]
+                        break
             launch_kwargs = {"headless": True}
             if executable:
                 launch_kwargs["executable_path"] = executable
