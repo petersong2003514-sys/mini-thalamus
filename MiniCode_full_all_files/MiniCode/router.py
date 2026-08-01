@@ -34,7 +34,7 @@ _COMPOUND_PATTERN = re.compile(
     "(?:\u7136\u540e|\u63a5\u7740|\u6700\u540e|"
     "\u5148.+\u518d|\u5148.+\u7136\u540e|"
     "\u518d(?:\u628a|\u5c06|\u751f\u6210|\u5199|\u753b|\u5206\u6790)|"
-    "\u540c\u65f6|\u4ee5\u53ca|->|\u2192|;|\uff1b)"
+    "\u5e76\u4e14|\u540c\u65f6|\u4ee5\u53ca|->|\u2192|;|\uff1b)"
 )
 
 
@@ -226,19 +226,19 @@ class Router:
             item for item in semantic_candidates if item["agent_id"] not in seen
         ]
         seen = {item["agent_id"] for item in llm_candidates}
-        lexical_limit = 6 if strict_cascade else self.top_k
+        lexical_limit = 6 if (strict_cascade or compound) else self.top_k
         lexical_candidates = self._lexical_candidates(
             user_message,
             specs,
             limit=lexical_limit,
         )
-        if strict_cascade:
+        if strict_cascade or compound:
             llm_candidates.extend(
                 item for item in lexical_candidates if item["agent_id"] not in seen
             )
         if not llm_candidates:
             llm_candidates = lexical_candidates
-        candidate_limit = 6 if strict_cascade else self.top_k
+        candidate_limit = 6 if (strict_cascade or compound) else self.top_k
 
         llm_decision = self._route_with_llm_retries(
             query=user_message,
