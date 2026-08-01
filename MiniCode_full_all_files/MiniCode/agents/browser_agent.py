@@ -87,8 +87,19 @@ class BrowserAgent:
         # 2. 启动浏览器并执行 ReAct 循环
         try:
             from playwright.sync_api import sync_playwright
+            executable = os.environ.get("SHUSHU_CHROMIUM_PATH", "")
+            if not executable:
+                import glob as _glob
+                matches = _glob.glob(os.path.expandvars(
+                    r"%LOCALAPPDATA%\ms-playwright\chromium-*\chrome-win64\chrome.exe"
+                ))
+                if matches:
+                    executable = matches[0]
+            launch_kwargs = {"headless": True}
+            if executable:
+                launch_kwargs["executable_path"] = executable
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
+                browser = pw.chromium.launch(**launch_kwargs)
                 page = browser.new_page()
                 page.set_default_timeout(PAGE_TIMEOUT)
 
