@@ -1070,7 +1070,8 @@ def _stage_sse(kind, payload):
         status = payload.get("status", "")
         text = "[{}] 完成".format(payload.get("agent_id", ""))
         if status == "blocked":
-            text += "（被执行策略阻止）"
+            reason = payload.get("answer", "") or payload.get("summary", "")
+            text += "（被执行策略阻止：" + str(reason)[:80] + "）"
         elif status == "skipped":
             text += "（依赖失败，已跳过）"
         elif status == "error":

@@ -283,6 +283,7 @@ class WorkflowExecutor:
                         "agent_id": call.function.name,
                         "status": result.get("status"),
                         "summary": result.get("summary", "")[:200],
+                        "answer": result.get("answer", "")[:120],
                     })
 
     def _run_group(self, items, *, original_query, trace_id):

@@ -186,7 +186,6 @@ function handleEvent(event, setMessages, setSessionId, setFileCache, currentStep
           next.push(newBubble)
         } else {
           const last = { ...next[next.length - 1] }
-          last.statusLines = []
           if (event.step) {
             if (!last.stepLabels) last.stepLabels = []
             last.stepLabels = last.stepLabels.filter(s => s.step !== step)
@@ -219,7 +218,6 @@ function handleEvent(event, setMessages, setSessionId, setFileCache, currentStep
         const next = [...prev]
         const last = { ...next[next.length - 1] }
         last.structured = event.data || event
-        last.statusLines = []
         next[next.length - 1] = last
         return next
       })
