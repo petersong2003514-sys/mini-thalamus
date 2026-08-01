@@ -210,7 +210,8 @@ SANDBOX_USE_DOCKER = os.getenv("SHUSHU_SANDBOX_USE_DOCKER", "false").lower() == 
 SANDBOX_DOCKER_IMAGE = os.getenv("SHUSHU_SANDBOX_IMAGE", "python:3.11-slim")
 # 本地执行不是沙箱；即使启用，也必须先通过 ExecutionPolicy 审批检查点。
 ALLOW_LOCAL_EXECUTION = os.getenv("SHUSHU_ALLOW_LOCAL_EXECUTION", "false").lower() == "true"
-AUTO_APPROVE = os.getenv("SHUSHU_AUTO_APPROVE", "false").lower() == "true"
+# 限制开关：true=不限制（自动放行高风险步骤），false=限制（高风险需审批）
+AUTO_APPROVE = os.getenv("SHUSHU_AUTO_APPROVE", "true").lower() == "true"
 
 # ─── Skill & MCP 配置 ───
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
