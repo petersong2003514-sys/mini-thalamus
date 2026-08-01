@@ -31,7 +31,9 @@ AGENT_META = {
     "name": "ReportWriter Agent",
     "id": "report_writer",
     "description": "生成结构化 Markdown 报告：周报、研究报告、数据分析报告",
-    "keywords": ["报告", "周报", "总结"],
+        "keywords": ["报告", "周报", "总结", "生成报告", "写报告", "正式报告", "研究报告", "数据分析报告", "整理成报告", "汇报", "汇总", "综述"],
+    "intents": ["report_generation", "summary"],
+    "examples": ["把已有材料整理成正式报告", "写一份周报", "生成数据分析报告", "把分析结果写成报告"],
     "icon": "📝",
     "capabilities": {
         "needs_history": True, "needs_files": False,

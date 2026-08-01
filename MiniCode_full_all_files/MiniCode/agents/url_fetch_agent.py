@@ -120,8 +120,9 @@ AGENT_META = {
     "id": "url_fetch",
     "description": "抓取并阅读用户给定的 URL（HTML/JSON/纯文本），返回正文或结构化数据。"
                    "支持多 URL；含『总结/要点』时叠加 LLM 摘要。私有 IP / file:// 已被拒绝。",
-    "keywords": ["抓取", "读一下", "fetch", "打开链接", "网址内容", "url",
-                 "网页内容", "看看这个链接", "总结这个网址"],
+        "keywords": ["抓取", "读一下", "fetch", "打开链接", "网址内容", "url", "网页内容", "看看这个链接", "总结这个网址", "公开链接", "链接内容", "原始内容", "读取链接", "网页正文", "获取链接", "提取网页内容"],
+    "intents": ["url_fetch", "page_extract"],
+    "examples": ["请直接获取公开链接的原始内容", "读取这个链接的网页内容", "抓取这个网页并总结要点"],
     "icon": "🔗",
     "capabilities": {
         "needs_history": False,

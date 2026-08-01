@@ -22,7 +22,9 @@ AGENT_META = {
     "name": "API 调用",
     "id": "api_caller",
     "description": "执行 REST API 调用（GET/POST/PUT/DELETE JSON），支持从上一步结果中读取 API 端点。",
-    "keywords": ["api", "接口", "rest", "http请求", "post", "调用接口", "发请求"],
+        "keywords": ["api", "接口", "rest", "http请求", "post", "调用接口", "发请求", "调用外部接口", "接口调用", "API调用", "业务数据", "获取接口数据"],
+    "intents": ["api_call", "rest_request"],
+    "examples": ["调用外部接口获取业务数据", "POST 请求提交数据到接口"],
     "icon": "📡",
     "capabilities": {
         "needs_history": False,

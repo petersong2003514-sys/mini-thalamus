@@ -55,7 +55,9 @@ AGENT_META = {
     "name": "Code Agent",
     "id": "code",
     "description": "执行 Python 代码：数据分析、画图、计算、文件处理",
-    "keywords": ["画图", "计算", "python", "代码"],
+        "keywords": ["画图", "计算", "python", "代码", "编写代码", "检查代码", "程序代码", "写程序", "实现", "运行代码", "脚本", "调试", "debug"],
+    "intents": ["code_generation", "code_execution", "data_visualization", "file_processing"],
+    "examples": ["请编写并检查程序代码", "写一段 Python 代码并运行", "用代码画趋势图", "计算并输出结果"],
     "icon": "💻",
     "capabilities": {
         "needs_history": True, "needs_files": True,
