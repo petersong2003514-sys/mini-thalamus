@@ -106,10 +106,12 @@ class ExecutionPolicy:
     def __init__(self, workspace_root: str,
                  local_execution_enabled: bool = False,
                  docker_backend_enabled: bool = False,
-                 docker_cli_available: bool | None = None):
+                 docker_cli_available: bool | None = None,
+                 auto_approve: bool = False):
         self.workspace_root = os.path.realpath(workspace_root)
         self.local_execution_enabled = bool(local_execution_enabled)
         self.docker_backend_enabled = bool(docker_backend_enabled)
+        self.auto_approve = bool(auto_approve)
         self.docker_cli_available = (
             shutil.which("docker") is not None
             if docker_cli_available is None
@@ -146,6 +148,15 @@ class ExecutionPolicy:
                 "requires_approval": False,
                 "sandboxed": False,
                 "reason": "本地执行未启用，且适用的 Docker 隔离后端不可用",
+            }
+
+        if self.auto_approve:
+            return {
+                "action": "allow",
+                "risk_level": risk,
+                "requires_approval": False,
+                "sandboxed": sandboxed,
+                "reason": "自动放行（SHUSHU_AUTO_APPROVE=true）",
             }
 
         if risk in {"none", "database_read", "read_only"}:

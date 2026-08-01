@@ -3,7 +3,7 @@
 import os
 
 from base_agent import BaseAgent
-from config import ALLOW_LOCAL_EXECUTION, ROUTER_AGENTS, SANDBOX_USE_DOCKER
+from config import ALLOW_LOCAL_EXECUTION, AUTO_APPROVE, ROUTER_AGENTS, SANDBOX_USE_DOCKER
 from route_schema import RouteDecision
 from router import Router
 from sandbox import ExecutionPolicy
@@ -54,6 +54,7 @@ class Orchestrator:
             workspace_root=os.path.dirname(os.path.abspath(__file__)),
             local_execution_enabled=ALLOW_LOCAL_EXECUTION,
             docker_backend_enabled=SANDBOX_USE_DOCKER,
+            auto_approve=AUTO_APPROVE,
         )
         self.workflow_executor = WorkflowExecutor(self.runtime)
         self.memory = self.memory_service.store
