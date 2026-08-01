@@ -7,6 +7,7 @@ import uuid
 
 from openai import OpenAI
 
+from agent_contract import AgentContractError, normalize_agent_contract
 from config import (
     ROUTER_AGENTS,
     ROUTER_SEMANTIC_FALLBACK_THRESHOLD,
@@ -30,8 +31,15 @@ FALLBACK_AGENT = next(
 )
 
 _COMPOUND_PATTERN = re.compile(
-    r"(?:然后|并且|并|最后|接着|再(?:把|将|生成|写|画|分析)|同时|以及|->|→|;|；)"
+    "(?:\u7136\u540e|\u63a5\u7740|\u6700\u540e|"
+    "\u5148.+\u518d|\u5148.+\u7136\u540e|"
+    "\u518d(?:\u628a|\u5c06|\u751f\u6210|\u5199|\u753b|\u5206\u6790)|"
+    "\u540c\u65f6|\u4ee5\u53ca|->|\u2192|;|\uff1b)"
 )
+
+
+def _is_compound_intent(query: str) -> bool:
+    return bool(_COMPOUND_PATTERN.search(query or ""))
 _EXPLICIT_AGENT_PATTERN = re.compile(
     r"(?:@|/agent\s+)([a-zA-Z0-9_:-]+)",
     re.IGNORECASE,
@@ -111,16 +119,62 @@ class Router:
             file_context=file_context,
         ).to_legacy_dict()
 
+    def plan_workflow(
+        self,
+        user_message: str,
+        session_context: str = "",
+        *,
+        use_llm: bool = False,
+        max_steps: int = 6,
+        planner=None,
+        validate: bool = False,
+        repair_llm=None,
+        max_repair_attempts: int = 3,
+    ):
+        """Create a structured workflow draft from the same live Agent specs.
+
+        Planning is deliberately separate from :meth:`route_decision`: the
+        returned draft still needs DAG validation/repair before execution.
+        """
+        from workflow_planner import WorkflowPlanner
+
+        workflow_planner = planner or WorkflowPlanner(
+            agent_specs=self._agent_specs()
+        )
+        plan = workflow_planner.plan(
+            user_message,
+            context=session_context,
+            use_llm=use_llm,
+            max_steps=max_steps,
+        )
+        if not validate:
+            return plan
+        from dag_validator import DAGValidator
+
+        validator = DAGValidator(
+            agent_specs=self._agent_specs(),
+            max_steps=max_steps,
+        )
+        return validator.validate_or_repair(
+            plan,
+            original_query=user_message,
+            repair_llm=repair_llm,
+            max_repair_attempts=max_repair_attempts,
+            use_llm=use_llm,
+        )
+
     def route_decision(
         self,
         user_message: str,
         session_context: str = "",
         file_context: dict = None,
+        strict_cascade: bool = False,
+        max_route_attempts: int = 3,
     ) -> RouteDecision:
         specs = self._agent_specs()
         trace_id = uuid.uuid4().hex
         file_context = file_context or {}
-        compound = bool(_COMPOUND_PATTERN.search(user_message))
+        compound = _is_compound_intent(user_message)
         self._record_keyword_stats(user_message, specs)
 
         rule_agent, rule_reason = self._rule_match(
@@ -128,7 +182,7 @@ class Router:
             file_context,
             specs,
         )
-        if rule_agent and not compound:
+        if rule_agent and not compound and not strict_cascade:
             return self._single_decision(
                 agent_id=rule_agent,
                 instruction=user_message,
@@ -147,7 +201,7 @@ class Router:
             )
 
         semantic_candidates = self._semantic_candidates(user_message, specs)
-        if not compound and self._semantic_is_decisive(semantic_candidates):
+        if not compound and not strict_cascade and self._semantic_is_decisive(semantic_candidates):
             best = semantic_candidates[0]
             return self._single_decision(
                 agent_id=best["agent_id"],
@@ -160,50 +214,43 @@ class Router:
                 trace_id=trace_id,
             )
 
-        llm_candidates = semantic_candidates or self._lexical_candidates(
+        rule_candidates = []
+        if rule_agent:
+            rule_candidates.append({
+                "agent_id": rule_agent,
+                "score": 1.0,
+                "evidence": rule_reason or "rule match",
+            })
+        seen = {item["agent_id"] for item in rule_candidates}
+        llm_candidates = rule_candidates + [
+            item for item in semantic_candidates if item["agent_id"] not in seen
+        ]
+        seen = {item["agent_id"] for item in llm_candidates}
+        lexical_limit = 6 if strict_cascade else self.top_k
+        lexical_candidates = self._lexical_candidates(
             user_message,
             specs,
+            limit=lexical_limit,
         )
-        try:
-            payload = self._call_llm_router(
-                query=user_message,
-                context=session_context,
-                file_context=file_context,
-                candidates=llm_candidates[: self.top_k],
-                specs=specs,
+        if strict_cascade:
+            llm_candidates.extend(
+                item for item in lexical_candidates if item["agent_id"] not in seen
             )
-            if not isinstance(payload, dict):
-                raise RouteValidationError("LLM route must be an object")
-            payload = dict(payload)
-            raw_candidates = payload.get("candidates", []) or []
-            normalized_candidates = []
-            for item in raw_candidates:
-                if isinstance(item, str):
-                    normalized_candidates.append({
-                        "agent_id": item,
-                        "score": 1.0,
-                        "evidence": "llm",
-                    })
-                else:
-                    normalized_candidates.append(item)
-            payload["candidates"] = normalized_candidates
-            for call in payload.get("calls", []) or []:
-                arguments = call.get("function", {}).get("arguments", {})
-                refs = arguments.get("input_refs", []) or []
-                if isinstance(refs, list):
-                    arguments["input_refs"] = [
-                        ref
-                        if not isinstance(ref, str) or "." in ref
-                        else f"{ref}.answer"
-                        for ref in refs
-                    ]
-            payload["method"] = "llm"
-            payload["trace_id"] = trace_id
-            if not payload.get("candidates"):
-                payload["candidates"] = llm_candidates[: self.top_k]
-            return RouteDecision.from_dict(payload, agent_specs=specs)
-        except Exception as exc:
-            _log.warning("Structured Router LLM failed: %s", str(exc)[:200])
+        if not llm_candidates:
+            llm_candidates = lexical_candidates
+        candidate_limit = 6 if strict_cascade else self.top_k
+
+        llm_decision = self._route_with_llm_retries(
+            query=user_message,
+            context=session_context,
+            file_context=file_context,
+            candidates=llm_candidates[: candidate_limit],
+            specs=specs,
+            trace_id=trace_id,
+            max_attempts=max_route_attempts if strict_cascade else 1,
+        )
+        if llm_decision is not None:
+            return llm_decision
 
         if semantic_candidates and (
             semantic_candidates[0]["score"] >= self.semantic_fallback_threshold
@@ -226,6 +273,84 @@ class Router:
             trace_id=trace_id,
         )
 
+    def _route_with_llm_retries(
+        self,
+        *,
+        query: str,
+        context: str,
+        file_context: dict,
+        candidates: list[dict],
+        specs: dict,
+        trace_id: str,
+        max_attempts: int,
+    ):
+        attempts = []
+        validation_errors = []
+        attempt_count = max(1, int(max_attempts or 1))
+        for index in range(1, attempt_count + 1):
+            try:
+                payload = self._call_llm_router(
+                    query=query,
+                    context=context,
+                    file_context=file_context,
+                    candidates=candidates,
+                    specs=specs,
+                    validation_errors=list(validation_errors),
+                )
+                if not isinstance(payload, dict):
+                    raise RouteValidationError("LLM route must be an object")
+                payload = dict(payload)
+                raw_candidates = payload.get("candidates", []) or []
+                normalized_candidates = []
+                for item in raw_candidates:
+                    if isinstance(item, str):
+                        normalized_candidates.append({
+                            "agent_id": item,
+                            "score": 1.0,
+                            "evidence": "llm",
+                        })
+                    else:
+                        normalized_candidates.append(item)
+                payload["candidates"] = normalized_candidates
+                for call in payload.get("calls", []) or []:
+                    arguments = call.get("function", {}).get("arguments", {})
+                    refs = arguments.get("input_refs", []) or []
+                    if isinstance(refs, list):
+                        arguments["input_refs"] = [
+                            ref
+                            if not isinstance(ref, str) or "." in ref
+                            else f"{ref}.answer"
+                            for ref in refs
+                        ]
+                payload["method"] = "llm"
+                payload["trace_id"] = trace_id
+                if not payload.get("candidates"):
+                    payload["candidates"] = candidates
+                accepted_attempts = attempts + [{
+                    "attempt": index,
+                    "status": "accepted",
+                    "error": "",
+                }]
+                payload["metadata"] = {
+                    "attempts": accepted_attempts,
+                    "retry_count": index - 1,
+                }
+                return RouteDecision.from_dict(payload, agent_specs=specs)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {str(exc)[:200]}"
+                attempts.append({
+                    "attempt": index,
+                    "status": "rejected",
+                    "error": error,
+                })
+                validation_errors.append(error)
+                _log.warning(
+                    "Structured Router LLM attempt %s failed: %s",
+                    index,
+                    error,
+                )
+        return None
+
     def _agent_specs(self) -> dict:
         specs = {}
         if self._registry is not None:
@@ -243,6 +368,13 @@ class Router:
                 continue
             existing = specs.get(agent_id, {})
             merged = dict(existing)
+            if (
+                "intents" in info
+                and "examples" not in info
+                and "few_shots" not in info
+            ):
+                merged.pop("examples", None)
+                merged.pop("few_shots", None)
             merged.update(info)
             specs[agent_id] = self._normalize_spec(agent_id, merged)
 
@@ -264,15 +396,6 @@ class Router:
         spec = dict(info)
         spec["id"] = agent_id
         spec.setdefault("name", agent_id)
-        spec.setdefault("description", "")
-        spec.setdefault("keywords", [])
-        spec.setdefault("intents", [])
-        spec.setdefault("examples", [])
-        spec.setdefault("capabilities", {})
-        spec.setdefault(
-            "input_schema",
-            {"required": ["instruction"], "properties": {}},
-        )
         spec.setdefault(
             "output_schema",
             {
@@ -285,7 +408,19 @@ class Router:
                 ]
             },
         )
-        return spec
+        try:
+            return normalize_agent_contract(spec, default_id=agent_id)
+        except AgentContractError:
+            _log.warning("Invalid Agent contract for %s", agent_id, exc_info=True)
+            spec.setdefault("description", "")
+            spec.setdefault("keywords", [])
+            spec.setdefault("intents", [])
+            spec.setdefault("examples", [])
+            spec.setdefault("few_shots", [])
+            spec.setdefault("requires", spec.get("input_schema", {}).get("required", []))
+            spec.setdefault("exports", spec.get("output_schema", {}).get("exports", []))
+            spec.setdefault("capabilities", {})
+            return spec
 
     def _rule_match(self, query: str, file_context: dict, specs: dict):
         explicit = _EXPLICIT_AGENT_PATTERN.search(query)
@@ -350,7 +485,7 @@ class Router:
             >= self.semantic_margin
         )
 
-    def _lexical_candidates(self, query: str, specs: dict) -> list[dict]:
+    def _lexical_candidates(self, query: str, specs: dict, limit: int = None) -> list[dict]:
         lowered = query.lower()
         scored = []
         for agent_id, spec in specs.items():
@@ -368,8 +503,9 @@ class Router:
                 "score": score,
                 "evidence": "candidate_prefilter",
             })
+        result_limit = self.top_k if limit is None else max(1, int(limit))
         return sorted(scored, key=lambda item: (-item["score"], item["agent_id"]))[
-            : self.top_k
+            : result_limit
         ]
 
     def _call_llm_router(
@@ -380,6 +516,7 @@ class Router:
         file_context: dict,
         candidates: list[dict],
         specs: dict,
+        validation_errors: list[str] = None,
     ) -> dict:
         candidate_ids = [item["agent_id"] for item in candidates]
         if not candidate_ids:
@@ -402,6 +539,7 @@ class Router:
                 context=context,
                 file_context=file_context,
                 schema=schema,
+                validation_errors=list(validation_errors or []),
             )
 
         compact_agents = [
@@ -409,8 +547,9 @@ class Router:
                 "id": agent_id,
                 "description": spec.get("description", "")[:160],
                 "intents": spec.get("intents", []),
-                "examples": (spec.get("examples", []) or [])[:3],
-                "exports": spec.get("output_schema", {}).get("exports", []),
+                "few_shots": (spec.get("few_shots", []) or [])[:3],
+                "requires": spec.get("requires", []),
+                "exports": spec.get("exports", spec.get("output_schema", {}).get("exports", [])),
             }
             for agent_id, spec in candidate_specs.items()
         ]
@@ -444,6 +583,15 @@ class Router:
             f"JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
         )
         messages = [{"role": "system", "content": system_prompt}]
+        if validation_errors:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Previous route proposal failed validation; "
+                    "fix these errors: "
+                    + json.dumps(validation_errors, ensure_ascii=False)
+                ),
+            })
         if context:
             messages.append({
                 "role": "system",
