@@ -44,6 +44,8 @@ def _get_embed_model():
     if _embed_model is not None:
         return _embed_model
     try:
+        # Windows DLL conflict: torch must not load before pyarrow.
+        import pyarrow  # noqa: F401
         from sentence_transformers import SentenceTransformer
         _embed_model = SentenceTransformer(
             "paraphrase-multilingual-MiniLM-L12-v2",
