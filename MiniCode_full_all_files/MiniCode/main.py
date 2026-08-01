@@ -77,7 +77,11 @@ def interactive_mode(orchestrator, session_mgr):
             continue
 
         print(f"\n[ShuShu Agent] 分析中...")
-        result = orchestrator.process(msg, session_id=session.session_id)
+        result = orchestrator.process(
+            msg,
+            user_id="interactive_user",
+            session_id=session.session_id,
+        )
 
         print(f"[Router] → {result['agent_used']} Agent (confidence: {result['trace'][0].get('confidence', '?')})")
         print(f"\nShuShu Agent > {result['answer']}")

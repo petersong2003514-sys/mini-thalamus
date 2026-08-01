@@ -3,7 +3,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from base_agent import AgentResult
+from base_agent import AgentContext, AgentResult
 from route_schema import RouteDecision
 
 
@@ -18,6 +18,7 @@ class WorkflowExecutor:
         original_query: str,
         context: dict = None,
         approved_call_ids=None,
+        context_provider=None,
     ) -> dict:
         approved = set(approved_call_ids or [])
         base_context = dict(context or {})
@@ -109,6 +110,7 @@ class WorkflowExecutor:
                     results=results,
                     trace=trace,
                     trace_id=decision.trace_id,
+                    context_provider=context_provider,
                 )
                 return {
                     "status": "checkpoint",
@@ -130,6 +132,7 @@ class WorkflowExecutor:
                 results=results,
                 trace=trace,
                 trace_id=decision.trace_id,
+                context_provider=context_provider,
             )
 
             for call in ready:
@@ -174,6 +177,7 @@ class WorkflowExecutor:
         results: dict,
         trace: list,
         trace_id: str,
+        context_provider=None,
     ) -> None:
         if not calls:
             return
@@ -201,6 +205,13 @@ class WorkflowExecutor:
             })
             if call.depends_on:
                 run_context["previous_result"] = results[call.depends_on[-1]]
+
+            if context_provider is not None:
+                provided = context_provider(call, results)
+                if not isinstance(provided, dict):
+                    raise TypeError("context_provider must return a dict")
+                run_context.update(provided)
+
             prepared.append((call, agents[agent_id], run_context))
 
         groups = {}
@@ -240,8 +251,14 @@ class WorkflowExecutor:
         while attempt < 2:
             attempt += 1
             try:
+                agent_query = call.function.arguments["instruction"]
+                memory_payload = run_context.get("memory")
+                if isinstance(memory_payload, dict):
+                    agent_query = AgentContext.from_dict(
+                        memory_payload
+                    ).render_for_agent()
                 raw_result = agent.run(
-                    call.function.arguments["instruction"],
+                    agent_query,
                     context=run_context,
                 )
                 result = self._normalize_result(

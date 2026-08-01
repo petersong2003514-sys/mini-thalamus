@@ -9,6 +9,7 @@ import json
 import time
 import uuid
 import asyncio
+import hashlib
 
 _MINICODE_ROOT = os.path.dirname(os.path.abspath(__file__))
 _BUNDLE_ROOT = os.path.dirname(_MINICODE_ROOT)
@@ -399,23 +400,62 @@ async def index():
 def _verify_api_key(request: Request):
     """API Key 认证中间件。SHUSHU_API_KEY 为空时跳过认证。"""
     if not _SERVER_API_KEY:
-        return True  # 未配置 key，跳过认证
+        return "local_anonymous"  # local single-user mode
     # 支持 ?api_key=... 和 Authorization: Bearer ... 两种方式
     query_key = request.query_params.get("api_key")
     if query_key and _secrets.compare_digest(query_key, _SERVER_API_KEY):
-        return True
+        return "api_key:" + hashlib.sha256(
+            query_key.encode("utf-8")
+        ).hexdigest()
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:]
         if _secrets.compare_digest(token, _SERVER_API_KEY):
-            return True
+            return "api_key:" + hashlib.sha256(
+                token.encode("utf-8")
+            ).hexdigest()
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def _request_user_id(request: Request = None) -> str:
+    """Return only a server-authenticated principal, never a body field."""
+    if request is None:
+        return "local_anonymous"
+    principal = request.scope.get("user")
+    if principal is not None and getattr(principal, "is_authenticated", False):
+        identity = (
+            getattr(principal, "subject", None)
+            or getattr(principal, "user_id", None)
+            or getattr(principal, "id", None)
+        )
+        if identity is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Authenticated principal lacks a stable subject",
+            )
+        return "principal:" + hashlib.sha256(
+            str(identity).encode("utf-8")
+        ).hexdigest()
+    return getattr(request.state, "authenticated_user_id", "local_anonymous")
+
+
+def _resolve_web_session(user_id: str, session_id: str):
+    from memory_service import get_memory_service
+    from session_identity import InvalidSessionId
+    from session_manager import SessionOwnershipError
+
+    try:
+        return get_memory_service().resolve_session(user_id, session_id)
+    except InvalidSessionId as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SessionOwnershipError as exc:
+        raise HTTPException(status_code=403, detail="Session access denied") from exc
 
 
 @app.middleware("http")
 async def _api_auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/"):
-        _verify_api_key(request)
+        request.state.authenticated_user_id = _verify_api_key(request)
     return await call_next(request)
 
 
@@ -849,11 +889,13 @@ async def test_credential(body: dict):
 
 # ─── Skill 固化接口 ───
 @app.post("/api/skill/crystallize")
-async def crystallize_session(req: ChatRequest):
+async def crystallize_session(req: ChatRequest, request: Request = None):
     """将当前会话的工作流固化为一键复用的 Skill"""
     sid = req.session_id
     if not sid:
         return {"ok": False, "error": "缺少 session_id"}
+    user_id = _request_user_id(request)
+    _resolve_web_session(user_id, sid)
     try:
         from crystallize import crystallize
         result = crystallize(sid, req.message or None)
@@ -874,30 +916,31 @@ async def crystallize_session(req: ChatRequest):
 
 # ─── 会话清理接口 ───
 @app.post("/api/session/cleanup")
-async def cleanup_session_endpoint(req: ChatRequest):
+async def cleanup_session_endpoint(req: ChatRequest, request: Request = None):
     """对话结束 → 清理临时文件"""
     sid = req.session_id
     if not sid:
         return {"status": "ok", "message": "无 session_id"}
-    try:
-        memory.cleanup_session(sid)
-    except Exception as e:
-        pass
+    user_id = _request_user_id(request)
+    _resolve_web_session(user_id, sid)
+    memory.cleanup_session(sid)
     _log.info("会话 %s: 已清理", sid[:8])
     return {"status": "ok", "message": f"会话 {sid[:8]} 已清理"}
 
 
 # ─── 普通对话接口 ───
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request = None):
     """对话接口：自动路由或手动指定 Agent"""
     session_id = req.session_id or str(uuid.uuid4())[:8]
+    user_id = _request_user_id(request)
 
     # 手动指定 Agent（兼容内置 + 动态 Agent）
     if req.agent and req.agent in get_agents():
         return await _auto_route(
             f"@{req.agent} {req.message}",
             session_id,
+            user_id=user_id,
             approved_call_ids=req.approved_call_ids,
         )
 
@@ -905,11 +948,18 @@ async def chat(req: ChatRequest):
     return await _auto_route(
         req.message,
         session_id,
+        user_id=user_id,
         approved_call_ids=req.approved_call_ids,
     )
 
 
-async def _auto_route(message: str, session_id: str, approved_call_ids=None):
+async def _auto_route(
+    message: str,
+    session_id: str,
+    *,
+    user_id: str,
+    approved_call_ids=None,
+):
     """Execute automatic routing through the shared MainAgent orchestrator."""
     from orchestrator import Orchestrator
 
@@ -919,7 +969,7 @@ async def _auto_route(message: str, session_id: str, approved_call_ids=None):
     return await asyncio.to_thread(
         orchestrator.process,
         message,
-        "web_user",
+        user_id,
         session_id,
         approved_call_ids,
     )
@@ -997,6 +1047,8 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
     """流式对话核心实现 —— 支持多步 + 文件 + 跨轮记忆"""
     files = files or []
     sid = session_id or str(uuid.uuid4())[:8]
+    user_id = _request_user_id(request)
+    _resolve_web_session(user_id, sid)
 
     # ═══ 安全层：限流 ═══
     if request and not _rate_limit_check(request):
@@ -1024,9 +1076,6 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
     message = wrap_boundary(clean_message, "user_query")
     chosen_agent = agent
     is_manual = agent is not None
-
-    # ═══ 跨轮记忆：统一入口（标签 + 相关历史 + 长期记忆）═══
-    agent_query = memory.build_agent_context(sid, chosen_agent or "auto", clean_message)
 
     # ═══ 流式执行逻辑 ═══
     async def event_stream():
@@ -1056,6 +1105,7 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
         result = await _auto_route(
             route_input,
             sid,
+            user_id=user_id,
             approved_call_ids=approved_call_ids,
         )
         if result.get("status") == "checkpoint":

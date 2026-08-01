@@ -21,6 +21,7 @@
 **/data/cache/
 **/data/_ds_*.csv
 **/data/memory.json
+**/data/agent_memory.db*
 
 # Frontend dependencies and builds.
 **/node_modules/
