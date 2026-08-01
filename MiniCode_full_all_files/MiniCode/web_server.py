@@ -9,6 +9,7 @@ import json
 import time
 import uuid
 import asyncio
+import queue
 import hashlib
 
 _MINICODE_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -959,6 +960,7 @@ async def _auto_route(
     *,
     user_id: str,
     approved_call_ids=None,
+    on_stage=None,
 ):
     """Execute automatic routing through the shared MainAgent orchestrator."""
     from orchestrator import Orchestrator
@@ -972,6 +974,7 @@ async def _auto_route(
         user_id,
         session_id,
         approved_call_ids,
+        on_stage=on_stage,
     )
 
 
@@ -1041,6 +1044,48 @@ from memory_store import get_store
 memory = get_store()
 
 
+def _stage_sse(kind, payload):
+    if kind == "route":
+        agents = payload.get("agents") or []
+        event = {
+            "type": "route",
+            "agent": agents[0] if agents else "",
+            "multi_step": agents,
+            "reason": payload.get("reason", ""),
+            "confidence": payload.get("confidence", 0),
+            "method": payload.get("method", ""),
+            "mode": payload.get("mode", ""),
+        }
+    elif kind == "step_start":
+        event = {
+            "type": "status",
+            "subtype": "agent_start",
+            "agent": payload.get("agent_id", ""),
+            "text": "正在执行 [{}] {}".format(
+                payload.get("agent_id", ""),
+                payload.get("instruction", "")[:60],
+            ),
+        }
+    elif kind == "step_end":
+        status = payload.get("status", "")
+        text = "[{}] 完成".format(payload.get("agent_id", ""))
+        if status == "blocked":
+            text += "（被执行策略阻止）"
+        elif status == "skipped":
+            text += "（依赖失败，已跳过）"
+        elif status == "error":
+            text += "（执行失败）"
+        event = {
+            "type": "status",
+            "subtype": "agent_end",
+            "agent": payload.get("agent_id", ""),
+            "text": text,
+        }
+    else:
+        event = {"type": "status", "text": str(payload)}
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
 async def _chat_stream_impl(message: str, agent: str, session_id: str,
                             files: list = None, require_confirm: bool = None,
                             request: Request = None, approved_call_ids=None):
@@ -1102,12 +1147,36 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
             if is_manual and chosen_agent in agents
             else clean_message
         )
-        result = await _auto_route(
-            route_input,
-            sid,
-            user_id=user_id,
-            approved_call_ids=approved_call_ids,
+        yield f"data: {json.dumps({'type': 'status', 'text': '正在识别意图并规划任务...'}, ensure_ascii=False)}\n\n"
+        stage_queue = queue.Queue()
+
+        def on_stage(kind, payload):
+            stage_queue.put((kind, payload))
+
+        route_task = asyncio.create_task(
+            _auto_route(
+                route_input,
+                sid,
+                user_id=user_id,
+                approved_call_ids=approved_call_ids,
+                on_stage=on_stage,
+            )
         )
+        while not route_task.done():
+            while True:
+                try:
+                    kind, payload = stage_queue.get_nowait()
+                except queue.Empty:
+                    break
+                yield _stage_sse(kind, payload)
+            await asyncio.sleep(0.05)
+        while True:
+            try:
+                kind, payload = stage_queue.get_nowait()
+            except queue.Empty:
+                break
+            yield _stage_sse(kind, payload)
+        result = route_task.result()
         if result.get("status") == "checkpoint":
             pending = result.get("pending_call", {})
             payload = {

@@ -65,6 +65,7 @@ class Orchestrator:
         session_id: str = None,
         approved_call_ids=None,
         decision_override: RouteDecision = None,
+        on_stage=None,
     ) -> dict:
         session = self.memory_service.resolve_session(user_id, session_id)
         sid = session.session_id
@@ -97,6 +98,15 @@ class Orchestrator:
                     for item in decision.candidates
                 ],
             }
+            if on_stage is not None:
+                on_stage("route", {
+                    "mode": decision.mode,
+                    "method": decision.method,
+                    "confidence": decision.overall_confidence,
+                    "reason": decision.reason,
+                    "agents": [call.function.name for call in decision.calls],
+                })
+
             if not decision.calls:
                 answer = self._general_reply(user_message, session)
                 self.memory_service.complete_turn(
@@ -175,6 +185,7 @@ class Orchestrator:
                 },
                 approved_call_ids=approved_call_ids,
                 context_provider=context_provider,
+                on_stage=on_stage,
             )
             execution_trace = [route_trace, *execution.get("trace", [])]
             if execution["status"] == "checkpoint":

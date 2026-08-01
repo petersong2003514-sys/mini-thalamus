@@ -1,7 +1,7 @@
 import unittest
 import sys
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
 
@@ -110,6 +110,7 @@ class WebMainAgentPathTests(unittest.IsolatedAsyncioTestCase):
             "session1",
             user_id="principal:alice",
             approved_call_ids=[],
+            on_stage=ANY,
         )
 
     async def test_cleanup_checks_owner_before_removing_session_files(self):

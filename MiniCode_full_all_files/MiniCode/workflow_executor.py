@@ -19,6 +19,7 @@ class WorkflowExecutor:
         context: dict = None,
         approved_call_ids=None,
         context_provider=None,
+        on_stage=None,
     ) -> dict:
         approved = set(approved_call_ids or [])
         base_context = dict(context or {})
@@ -47,6 +48,19 @@ class WorkflowExecutor:
                     if results.get(dependency, {}).get("status") != "success"
                 ]
                 if failed_dependencies:
+                    if on_stage is not None:
+                        on_stage("step_start", {
+                            "call_id": call.call_id,
+                            "agent_id": call.function.name,
+                            "intent": call.intent,
+                            "instruction": call.function.arguments["instruction"],
+                        })
+                        on_stage("step_end", {
+                            "call_id": call.call_id,
+                            "agent_id": call.function.name,
+                            "status": "skipped",
+                            "summary": "依赖步骤失败",
+                        })
                     results[call.call_id] = {
                         "status": "skipped",
                         "answer": "",
@@ -72,6 +86,19 @@ class WorkflowExecutor:
                     continue
 
                 if call.policy.get("action") == "deny":
+                    if on_stage is not None:
+                        on_stage("step_start", {
+                            "call_id": call.call_id,
+                            "agent_id": call.function.name,
+                            "intent": call.intent,
+                            "instruction": call.function.arguments["instruction"],
+                        })
+                        on_stage("step_end", {
+                            "call_id": call.call_id,
+                            "agent_id": call.function.name,
+                            "status": "blocked",
+                            "summary": "执行策略拒绝",
+                        })
                     results[call.call_id] = {
                         "status": "blocked",
                         "answer": call.policy.get("reason", "执行策略拒绝该步骤"),
@@ -111,6 +138,7 @@ class WorkflowExecutor:
                     trace=trace,
                     trace_id=decision.trace_id,
                     context_provider=context_provider,
+                    on_stage=on_stage,
                 )
                 return {
                     "status": "checkpoint",
@@ -133,6 +161,7 @@ class WorkflowExecutor:
                 trace=trace,
                 trace_id=decision.trace_id,
                 context_provider=context_provider,
+                on_stage=on_stage,
             )
 
             for call in ready:
@@ -178,6 +207,7 @@ class WorkflowExecutor:
         trace: list,
         trace_id: str,
         context_provider=None,
+        on_stage=None,
     ) -> None:
         if not calls:
             return
@@ -220,6 +250,15 @@ class WorkflowExecutor:
                 (call, agent, run_context)
             )
 
+        if on_stage is not None:
+            for call, agent, run_context in prepared:
+                on_stage("step_start", {
+                    "call_id": call.call_id,
+                    "agent_id": call.function.name,
+                    "intent": call.intent,
+                    "instruction": call.function.arguments["instruction"],
+                })
+
         with ThreadPoolExecutor(max_workers=len(groups)) as pool:
             futures = {
                 agent_id: pool.submit(
@@ -238,6 +277,13 @@ class WorkflowExecutor:
                 result, entry = group_results[call.function.name].pop(0)
                 results[call.call_id] = result
                 trace.append(entry)
+                if on_stage is not None:
+                    on_stage("step_end", {
+                        "call_id": call.call_id,
+                        "agent_id": call.function.name,
+                        "status": result.get("status"),
+                        "summary": result.get("summary", "")[:200],
+                    })
 
     def _run_group(self, items, *, original_query, trace_id):
         return [
