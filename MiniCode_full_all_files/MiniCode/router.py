@@ -247,7 +247,7 @@ class Router:
             candidates=llm_candidates[: candidate_limit],
             specs=specs,
             trace_id=trace_id,
-            max_attempts=max_route_attempts if strict_cascade else 1,
+            max_attempts=max_route_attempts,
         )
         if llm_decision is not None:
             return llm_decision
