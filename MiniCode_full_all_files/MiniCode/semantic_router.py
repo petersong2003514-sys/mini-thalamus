@@ -27,6 +27,8 @@ class SemanticMatcher:
         if self._encoder is not None:
             return self._encoder
         try:
+            # Windows DLL conflict: torch must not load before pyarrow.
+            import pyarrow  # noqa: F401
             from sentence_transformers import SentenceTransformer
 
             self._encoder = SentenceTransformer(self.model_name, device="cpu")

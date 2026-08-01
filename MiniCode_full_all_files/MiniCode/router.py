@@ -175,6 +175,28 @@ class Router:
             if not isinstance(payload, dict):
                 raise RouteValidationError("LLM route must be an object")
             payload = dict(payload)
+            raw_candidates = payload.get("candidates", []) or []
+            normalized_candidates = []
+            for item in raw_candidates:
+                if isinstance(item, str):
+                    normalized_candidates.append({
+                        "agent_id": item,
+                        "score": 1.0,
+                        "evidence": "llm",
+                    })
+                else:
+                    normalized_candidates.append(item)
+            payload["candidates"] = normalized_candidates
+            for call in payload.get("calls", []) or []:
+                arguments = call.get("function", {}).get("arguments", {})
+                refs = arguments.get("input_refs", []) or []
+                if isinstance(refs, list):
+                    arguments["input_refs"] = [
+                        ref
+                        if not isinstance(ref, str) or "." in ref
+                        else f"{ref}.answer"
+                        for ref in refs
+                    ]
             payload["method"] = "llm"
             payload["trace_id"] = trace_id
             if not payload.get("candidates"):
@@ -393,9 +415,30 @@ class Router:
             for agent_id, spec in candidate_specs.items()
         ]
         system_prompt = (
-            "你是 ShuShu Agent 的结构化路由器。把复合请求拆为原子步骤；"
-            "每一步只能有一个主要 intent 和一个 function。"
-            "calls 必须形成无环依赖图，input_refs 只能读取依赖步骤的 exports。"
+            "你是 ShuShu Agent 的结构化路由器。把复合请求拆成原子步骤，"
+            "每一步只能有一个主要 intent 和一个 function；"
+            "用户明确要求的多步操作一个都不能少，但不要添加用户没有明确要求的额外步骤。"
+            "路由规则："
+            "data_analyst 只用于分析已上传的 CSV/Excel/表格数据；"
+            "画图/图表/可视化/代码执行必须选 code；"
+            "数据库/SQL/统计数据查询选 nl2sql；"
+            "知识库/手册/制度/资料检索选 rag；"
+            "解析或提取已上传 PDF/Word/Excel 文档内容选 docparse；"
+            "实时信息/新闻/天气/最新动态选 websearch；"
+            "多源调研/优缺点对比/行业研究/技术选型选 deep_research；"
+            "生成/撰写报告选 report_writer；"
+            "调用外部 API/HTTP/rest 接口选 api_caller；"
+            "抓取/读取网页 URL 内容选 url_fetch；"
+            "打开/操作浏览器页面选 browser；"
+            "图片/截图/照片识别选 vision；"
+            "shell/bash/终端命令选 shell；"
+            "纯闲聊、问候、自我介绍或无法判断时选 general 或 fallback。"
+            "calls 必须形成无环依赖图；"
+            "call_id 用 step_1、step_2 这类简短 id；"
+            "input_refs 必须写成 <call_id>.<export>，例如 step_1.answer，"
+            "不能只写裸 call_id；"
+            "candidates 每个元素必须是对象 {agent_id, score, evidence}，"
+            "不能是字符串。"
             "只输出符合 JSON Schema 的 JSON，不要 Markdown。\n"
             f"候选 Agent: {json.dumps(compact_agents, ensure_ascii=False)}\n"
             f"JSON Schema: {json.dumps(schema, ensure_ascii=False)}"
