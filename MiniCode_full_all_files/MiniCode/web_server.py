@@ -256,11 +256,11 @@ def _ensure_startup():
             results = mm.connect_all()
             _dynamic_cache["mcp_manager"] = mm
             # 注册 MCP 工具到 ToolRegistry
-            from tool_registry import registry, ToolDef
+            from tool_registry import registry as tool_registry, ToolDef
             for tool in mm.get_all_tools():
                 server = tool.get("server", "unknown")
                 tname = f"mcp.{server}.{tool['name']}"
-                registry.register(ToolDef(
+                tool_registry.register(ToolDef(
                     name=tname,
                     description=tool.get("description", f"MCP tool: {tool['name']}"),
                     parameters=tool.get("inputSchema", {"type": "object", "properties": {}}),
