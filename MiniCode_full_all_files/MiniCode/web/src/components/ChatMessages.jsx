@@ -91,6 +91,7 @@ function Message({ msg }) {
         {msg.statusLines?.map((s, i) => (
           <div key={i} className="route-detail">{s}</div>
         ))}
+        {msg.approval && <ApprovalCard approval={msg.approval} />}
         {msg.loading ? (
           <div className="thinking"><span /><span /><span /></div>
         ) : (
@@ -502,6 +503,27 @@ function RichText({ text }) {
           })
         })
       })}
+    </div>
+  )
+}
+
+function ApprovalCard({ approval }) {
+  const [visible, setVisible] = useState(true)
+  if (!visible) return null
+  const approve = () => {
+    window.dispatchEvent(new CustomEvent('minicode:approve', {
+      detail: { callIds: [approval.callId] },
+    }))
+    setVisible(false)
+  }
+  return (
+    <div className="checkpoint-card">
+      <div className="cp-header">🔐 需要批准：步骤 {approval.callId}</div>
+      <div className="cp-hint">{approval.answer || '该步骤需要批准后才能执行'}</div>
+      <div className="cp-actions">
+        <button className="cp-btn-cancel" onClick={() => setVisible(false)}>✕ 取消</button>
+        <button className="cp-btn-continue" onClick={approve}>✓ 批准并继续</button>
+      </div>
     </div>
   )
 }

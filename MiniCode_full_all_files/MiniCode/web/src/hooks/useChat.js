@@ -9,6 +9,8 @@ export default function useChat() {
   const [fileCache, setFileCache] = useState([])
   const abortRef = useRef(null)
   const currentStepRef = useRef(0)
+  const pendingQueryRef = useRef('')
+  const pendingAgentRef = useRef('')
 
   const send = useCallback(async (text, agentId, files = [], opts = {}) => {
     // 终止上一次未完成的请求，避免两个 SSE 流冲突
@@ -34,6 +36,8 @@ export default function useChat() {
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setLoading(true)
 
+    pendingQueryRef.current = text
+    pendingAgentRef.current = agentId
     const controller = new AbortController()
     abortRef.current = controller
 
@@ -144,6 +148,20 @@ export default function useChat() {
     return () => window.removeEventListener('minicode:checkpoint', handler)
   }, [])
 
+  useEffect(() => {
+    const handler = (e) => {
+      const detail = e.detail || {}
+      const callIds = detail.callIds || []
+      if (!pendingQueryRef.current || callIds.length === 0) return
+      send(pendingQueryRef.current, pendingAgentRef.current, [], {
+        approvedCallIds: callIds,
+        requireConfirm: false,
+      })
+    }
+    window.addEventListener('minicode:approve', handler)
+    return () => window.removeEventListener('minicode:approve', handler)
+  }, [send])
+
   return { messages, loading, send, abort, sessionId, fileCache }
 }
 
@@ -159,6 +177,20 @@ function handleEvent(event, setMessages, setSessionId, setFileCache, currentStep
         last.routeTag = buildRouteTag(event)
         last.steps = event.multi_step || [event.agent]
         last.text = ''
+        next[next.length - 1] = last
+        return next
+      })
+      break
+
+    case 'approval_checkpoint':
+      setMessages(prev => {
+        const next = [...prev]
+        const last = { ...next[next.length - 1] }
+        last.approval = {
+          callId: event.call_id,
+          answer: event.answer || '',
+          sessionId: event.session_id || ''
+        }
         next[next.length - 1] = last
         return next
       })
