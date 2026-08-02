@@ -1,0 +1,11 @@
+{"id": "code-001", "agent": "code", "query": "用代码计算斐波那契数列第10项（从0开始），并输出结果", "metric": "contains_any", "expected": ["55"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "code-002", "agent": "code", "query": "用代码对列表 [3,1,2] 排序并输出结果", "metric": "contains_any", "expected": ["1, 2, 3", "[1, 2, 3]", "1 2 3"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "nl2sql-001", "agent": "nl2sql", "query": "查询已完成订单的总销售额", "metric": "contains_any", "expected": ["16680753.06", "16680753"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "nl2sql-002", "agent": "nl2sql", "query": "查询订单总数", "metric": "contains_any", "expected": ["2541"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "websearch-001", "agent": "websearch", "query": "搜索最新的人工智能领域新闻，列出 3 个来源链接", "metric": "sources_min", "expected": [1], "min_chars": 50, "timeout": 120, "network": true}
+{"id": "report-001", "agent": "report_writer", "query": "写一份关于本周项目进度的周报", "metric": "structure", "expected": [3], "min_chars": 200, "timeout": 120, "network": false}
+{"id": "api-001", "agent": "api_caller", "query": "调用 Tavily Extract 提取 https://example.com 的内容", "metric": "http_ok", "expected": [], "min_chars": 5, "timeout": 60, "network": true}
+{"id": "api-002", "agent": "api_caller", "query": "查询美元汇率", "metric": "contains_any", "expected": ["success"], "min_chars": 5, "timeout": 60, "network": true}
+{"id": "docparse-001", "agent": "docparse", "query": "这份合同的主要内容是什么？", "metric": "contains_any", "expected": ["合同", "采购"], "min_chars": 30, "timeout": 120, "network": false, "file": "MiniCode_full_all_files/MiniCode/test_doc.txt"}
+{"id": "data_analyst-001", "agent": "data_analyst", "query": "统计这个CSV的总销售额", "metric": "contains_any", "expected": ["600"], "min_chars": 5, "timeout": 120, "network": false, "file": "MiniCode_full_all_files/MiniCode/evals/data/sales_eval.csv"}
+{"id": "deep_research-001", "agent": "deep_research", "query": "对比 Python 和 Rust 的优缺点，给出选型建议", "metric": "status_success", "expected": [], "min_chars": 100, "timeout": 240, "network": true}

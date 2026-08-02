@@ -97,6 +97,13 @@ class WebSearchAgent:
 
         valid = [s for s in selected if s.get("content")]
         if not valid:
+            snippet_sources = [s for s in selected if s.get("snippet")]
+            if snippet_sources:
+                for src in snippet_sources:
+                    src["content"] = src.get("snippet", "")[:CONTENT_MAX_CHARS]
+                valid = snippet_sources
+                print("  [WebSearch] 页面抓取失败，改用搜索摘要生成回答")
+        if not valid:
             return {"status": "partial",
                     "answer": f"搜索到 {len(selected)} 条结果，但无法抓取网页内容。",
                     "data": {"sources": selected, "query": query}}
