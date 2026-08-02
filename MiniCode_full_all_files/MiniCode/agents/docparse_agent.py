@@ -64,9 +64,10 @@ class DocParseAgent:
         sid = ctx.get("session_id", "default")
 
         # ── 新上传文件 → 解析 + 注册到 MemoryStore ──
-        if files:
+        uploaded = [f for f in files if isinstance(f, dict)]
+        if uploaded:
             new_docs, errors = [], []
-            for f in files:
+            for f in uploaded:
                 parsed = _parse_file(f)
                 if parsed.get("error"):
                     errors.append(parsed["error"])
@@ -85,22 +86,14 @@ class DocParseAgent:
 
             # 加载所有文件（新旧合并）
             all_parsed = self.store.load_all_parsed_files(sid)
-            docs = new_docs + all_parsed
-            # 去重
             seen_names = {d.get("name") for d in new_docs}
             docs = new_docs + [d for d in all_parsed
                               if d.get("name") not in seen_names]
-
-        # ── 无新文件 → 从 MemoryStore 加载 ──
         else:
             docs = self.store.load_all_parsed_files(sid)
+            errors = []
             if docs:
                 print(f"  [DocParse] 会话{sid[:8]}: 从 MemoryStore 加载 {len(docs)} 个文档")
-                errors = []
-            else:
-                return {"status": "error",
-                        "answer": "未收到文件且无会话缓存。请上传 PDF/Word/Excel/TXT 文件。",
-                        "data": {}, "summary": ""}
 
         if not docs:
             return {"status": "error",

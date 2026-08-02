@@ -67,17 +67,23 @@ class Orchestrator:
         approved_call_ids=None,
         decision_override: RouteDecision = None,
         on_stage=None,
+        files: list = None,
     ) -> dict:
         session = self.memory_service.resolve_session(user_id, session_id)
         sid = session.session_id
         turn = self.memory_service.start_turn(session, user_message)
         try:
-            files = self.memory.get_files(sid)
+            uploaded_files = list(files or [])
+            if uploaded_files and isinstance(uploaded_files[0], dict):
+                file_names = [f.get("name", "") for f in uploaded_files]
+            else:
+                uploaded_files = []
+                file_names = list(self.memory.get_files(sid))
             file_context = None
-            if files:
+            if file_names:
                 file_context = {
                     "has_files": True,
-                    "file_names": files,
+                    "file_names": file_names,
                     "session_id": sid,
                 }
             decision = decision_override or self.router.route_decision(
@@ -182,7 +188,7 @@ class Orchestrator:
                 original_query=user_message,
                 context={
                     "session_id": sid,
-                    "files": files,
+                    "files": uploaded_files or file_names,
                 },
                 approved_call_ids=approved_call_ids,
                 context_provider=context_provider,

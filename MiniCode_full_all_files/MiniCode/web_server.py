@@ -992,6 +992,7 @@ async def _auto_route(
     approved_call_ids=None,
     on_stage=None,
     require_confirm: bool = False,
+    files: list = None,
 ):
     """Execute automatic routing through the shared MainAgent orchestrator."""
     from orchestrator import Orchestrator
@@ -1020,6 +1021,7 @@ async def _auto_route(
         session_id,
         approved_call_ids,
         on_stage=on_stage,
+        files=files,
     )
 
 
@@ -1207,6 +1209,7 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
                 approved_call_ids=approved_call_ids,
                 on_stage=on_stage,
                 require_confirm=bool(require_confirm),
+                files=files,
             )
         )
         while not route_task.done():

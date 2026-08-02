@@ -454,9 +454,9 @@ function RichText({ text }) {
           const code = part.replace(/```\w*\n/, '').replace(/```$/, '')
           return <pre key={i} className="code-block"><code>{code}</code></pre>
         }
-        const imgParts = part.split(/(!\[chart\]\([^)]+\))/g)
+        const imgParts = part.split(/(!\[[^\]]*\]\([^)]+\))/g)
         return imgParts.map((p, j) => {
-          const m = p.match(/!\[chart\]\(([^)]+)\)/)
+          const m = p.match(/!\[[^\]]*\]\(([^)]+)\)/)
           if (m) {
             const url = m[1]; const filename = url.split('/').pop()
             return (

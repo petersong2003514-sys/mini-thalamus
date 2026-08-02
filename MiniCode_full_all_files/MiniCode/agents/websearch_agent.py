@@ -104,6 +104,13 @@ class WebSearchAgent:
         # Step 5: LLM 阅读选中网页 + 生成结构化答案
         from structured_output import render_to_text
         structured = self._generate_answer(query, valid)
+        if not structured.get("answer"):
+            items = structured.get("data", {}).get("items") or []
+            if items:
+                structured["answer"] = "\n".join(
+                    f"{index + 1}. {item.get('title', '')}"
+                    for index, item in enumerate(items)
+                )
 
         return {
             "status": "success",
@@ -442,6 +449,7 @@ class WebSearchAgent:
                     "role": "system",
                     "content": (
                         "从搜索结果中选出最可能回答用户问题的 2-3 个网页。"
+                        "如果用户问的是某主题的新闻或动态，相关政策、行业、企业动态也算相关，不要只看标题关键词。"
                         "只输出数字编号，空格分隔，如: 1 3 5"
                         "\n不要输出任何其他内容。"
                     )
@@ -518,7 +526,7 @@ class WebSearchAgent:
             resp = self.client.chat.completions.create(
                 model=LLM_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": "你是联网搜索助手。基于搜索结果回答，输出 JSON。"},
+                    {"role": "system", "content": "你是联网搜索助手。基于搜索结果回答，输出 JSON。判断相关性以用户问题中的主题词为准；相关主题的政策、行业、企业、技术动态都应纳入回答，只有结果确实与问题完全无关时才说明未找到。"},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1, max_tokens=max_tokens_for(query, "answer"),

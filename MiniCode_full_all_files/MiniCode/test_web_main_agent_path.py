@@ -112,6 +112,7 @@ class WebMainAgentPathTests(unittest.IsolatedAsyncioTestCase):
             approved_call_ids=[],
             on_stage=ANY,
             require_confirm=False,
+            files=[],
         )
 
     async def test_cleanup_checks_owner_before_removing_session_files(self):
