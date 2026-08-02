@@ -90,6 +90,8 @@ class WebSearchAgent:
         for src in selected:
             if time.time() - start_time > TOTAL_TIMEOUT:
                 break
+            if src.get("source_type") == "direct_fetch" and src.get("content"):
+                continue
             content = self._fetch_page(src["url"])
             src["content"] = content[:CONTENT_MAX_CHARS] if content else ""
 

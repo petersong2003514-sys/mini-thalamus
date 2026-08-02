@@ -5,8 +5,34 @@ export default function useChat() {
     { role: 'assistant', text: '你好！我是 MiniCode，有什么可以帮你的？\n\n试试看：\n• 「查一下最近的销售数据」\n• 「帮我分析这个CSV文件画个趋势图」\n• 「上传图片提取文字信息」\n\n👈 左侧可以手动选择 Agent，或让系统自动判断', routeTag: null }
   ])
   const [loading, setLoading] = useState(false)
-  const [sessionId, setSessionId] = useState('')
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem('minicode_session_id') || '')
   const [fileCache, setFileCache] = useState([])
+  const initialSessionRef = useRef(sessionId)
+
+  useEffect(() => {
+    if (sessionId) localStorage.setItem('minicode_session_id', sessionId)
+  }, [sessionId])
+
+  useEffect(() => {
+    const sid = initialSessionRef.current
+    if (!sid) return
+    let cancelled = false
+    fetch(`/api/session/history?session_id=${encodeURIComponent(sid)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled || !data || !Array.isArray(data.turns) || !data.turns.length) return
+        const restored = []
+        for (const turn of data.turns) {
+          restored.push({ role: 'user', text: turn.query, routeTag: null })
+          restored.push({ role: 'assistant', text: turn.answer || '', routeTag: null,
+                          stepLabels: turn.agent_id ? [{ step: 1, agent: turn.agent_id }] : [] })
+        }
+        setMessages(restored)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const abortRef = useRef(null)
   const currentStepRef = useRef(0)
   const pendingQueryRef = useRef('')
@@ -56,7 +82,7 @@ export default function useChat() {
         res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text, agent: agentId || null, session_id: sessionId, require_confirm: requireConfirm || null }),
+          body: JSON.stringify({ message: text, agent: agentId || null, session_id: sessionId, require_confirm: requireConfirm || null, approved_call_ids: opts.approvedCallIds || null }),
           signal: controller.signal,
         })
       }
@@ -106,18 +132,6 @@ export default function useChat() {
     abortRef.current?.abort()
     setLoading(false)
   }, [])
-
-  // 页面关闭/刷新时自动清理服务端临时文件
-  useEffect(() => {
-    const doCleanup = () => {
-      if (!sessionId) return
-      const blob = new Blob([JSON.stringify({ session_id: sessionId })],
-                            { type: 'application/json' })
-      navigator.sendBeacon?.('/api/session/cleanup', blob)
-    }
-    window.addEventListener('beforeunload', doCleanup)
-    return () => window.removeEventListener('beforeunload', doCleanup)
-  }, [sessionId])
 
   // 组件卸载时取消进行中的请求
   useEffect(() => {

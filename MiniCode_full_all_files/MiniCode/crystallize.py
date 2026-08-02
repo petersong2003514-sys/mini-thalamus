@@ -47,8 +47,21 @@ def crystallize(session_id: str, skill_name: str = None) -> dict:
     from memory_store import get_store
     store = get_store()
 
-    # 读取对话历史
+    # 读取对话历史（优先 JSON，缺失时回退到 SQLite turns）
     history = store._load_history(session_id)
+    if not history:
+        records = store.list_turns(session_id)
+        history = [
+            {
+                "id": turn.turn_id,
+                "q": turn.query,
+                "a": turn.answer or "",
+                "agent": turn.agent_id,
+                "tags": list(turn.tags),
+                "ts": turn.created_at,
+            }
+            for turn in records
+        ]
     if not history:
         return {"ok": False, "error": "该会话没有对话记录"}
 
@@ -155,6 +168,21 @@ _caller(agent_name, prompt, context=None) 辅助函数已可用，它会:
         return {"ok": False, "error": f"LLM 分析失败: {e}"}
 
 
+def _indent_block(code: str) -> str:
+    lines = code.strip().splitlines()
+    if not lines:
+        return "    pass\n"
+    return "\n".join("    " + line for line in lines) + "\n"
+
+
+def _fallback_return(name: str) -> str:
+    return (
+        "    return {\"status\": \"success\", "
+        "\"answer\": f\"Skill '{name}' 执行完成\", "
+        "\"data\": {}, \"summary\": \"\"}\n"
+    )
+
+
 def _generate_skill_file(analysis: dict) -> str:
     """根据 LLM 生成的完整代码创建 Skill 文件"""
     meta = analysis.get("meta", {})
@@ -168,14 +196,27 @@ def _generate_skill_file(analysis: dict) -> str:
     # 如果 LLM 返回了完整代码，用它；否则降级为骨架
     if code and len(code) > 50:
         run_code = code
+        if re.search(r"(?m)^def run\(", run_code):
+            run_block = run_code.rstrip() + "\n"
+        else:
+            run_block = (
+                "def run(query: str, context: dict = None) -> dict:\n"
+                + _indent_block(run_code)
+                + _fallback_return(name)
+            )
     else:
-        # 降级：生成骨架
         agent_chain = analysis.get("pattern", {}).get("agent_chain", [])
         run_code = (
-            "    # 工作流: " + " → ".join(agent_chain) + "\\n"
-            "    # TODO: 根据对话模式完善具体调用逻辑\\n"
-            "    pass\\n"
+            "    # 工作流: " + " → ".join(agent_chain) + "\n"
+            "    # TODO: 根据对话模式完善具体调用逻辑\n"
+            "    pass\n"
         )
+        run_block = (
+            "def run(query: str, context: dict = None) -> dict:\n"
+            + run_code
+            + _fallback_return(name)
+        )
+
 
     content = f'''"""固化 Skill: {name}
 
@@ -192,16 +233,7 @@ META = {{
 }}
 
 
-def run(query: str, context: dict = None) -> dict:
-{run_code}
-
-    # 最终返回（如果代码中没有 return）
-    return {{
-        "status": "success",
-        "answer": f"Skill '{name}' 执行完成",
-        "data": {{}},
-        "summary": "",
-    }}
+{run_block}
 
 
 def _caller(agent_name: str, prompt: str, ctx: dict = None) -> dict:

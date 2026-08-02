@@ -725,6 +725,12 @@ async def delete_skill(skill_id: str):
             sl.skills.pop(skill_id, None)
             if skill_id in AGENT_LOADERS:
                 del AGENT_LOADERS[skill_id]
+            registry = _dynamic_cache.get("registry")
+            if registry is not None:
+                try:
+                    registry.unregister(skill_id)
+                except Exception:
+                    pass
         _log.info("已删除 Skill: %s", skill_id)
         return {"ok": True}
     except Exception as e:
@@ -929,6 +935,30 @@ async def cleanup_session_endpoint(req: ChatRequest, request: Request = None):
     return {"status": "ok", "message": f"会话 {sid[:8]} 已清理"}
 
 
+@app.get("/api/session/history")
+async def session_history_endpoint(session_id: str, request: Request = None):
+    """Return persisted turns for a session."""
+    user_id = _request_user_id(request)
+    _resolve_web_session(user_id, session_id)
+    turns = memory.list_turns(session_id)
+    return {
+        "session_id": session_id,
+        "turns": [
+            {
+                "turn_id": turn.turn_id,
+                "query": turn.query,
+                "answer": turn.answer,
+                "agent_id": turn.agent_id,
+                "status": turn.status,
+                "tags": list(turn.tags),
+                "created_at": turn.created_at,
+                "completed_at": turn.completed_at,
+            }
+            for turn in turns
+        ],
+    }
+
+
 # ─── 普通对话接口 ───
 @app.post("/api/chat")
 async def chat(req: ChatRequest, request: Request = None):
@@ -961,13 +991,28 @@ async def _auto_route(
     user_id: str,
     approved_call_ids=None,
     on_stage=None,
+    require_confirm: bool = False,
 ):
     """Execute automatic routing through the shared MainAgent orchestrator."""
     from orchestrator import Orchestrator
+    from sandbox import ExecutionPolicy
+    from config import ALLOW_LOCAL_EXECUTION, SANDBOX_USE_DOCKER
 
     runtime = _dynamic_cache.get("runtime") or get_runtime()
     registry = _dynamic_cache.get("registry")
-    orchestrator = Orchestrator(runtime=runtime, registry=registry)
+    execution_policy = None
+    if require_confirm:
+        execution_policy = ExecutionPolicy(
+            workspace_root=os.path.dirname(os.path.abspath(__file__)),
+            local_execution_enabled=ALLOW_LOCAL_EXECUTION,
+            docker_backend_enabled=SANDBOX_USE_DOCKER,
+            auto_approve=False,
+        )
+    orchestrator = Orchestrator(
+        runtime=runtime,
+        registry=registry,
+        execution_policy=execution_policy,
+    )
     return await asyncio.to_thread(
         orchestrator.process,
         message,
@@ -1161,6 +1206,7 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
                 user_id=user_id,
                 approved_call_ids=approved_call_ids,
                 on_stage=on_stage,
+                require_confirm=bool(require_confirm),
             )
         )
         while not route_task.done():
