@@ -1,0 +1,10 @@
+{
+  "name": "Exchange Rate",
+  "aliases": ["汇率", "exchange rate", "汇率接口"],
+  "method": "GET",
+  "url_template": "https://open.er-api.com/v6/latest/{base}",
+  "headers": {},
+  "params_schema": {
+    "base": {"type": "string", "default": "USD"}
+  }
+}

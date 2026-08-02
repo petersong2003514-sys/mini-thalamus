@@ -68,6 +68,52 @@ def _ssrf_check(url: str) -> bool:
     return False
 
 
+_ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
+
+
+def _resolve_env(value):
+    if isinstance(value, str):
+        return _ENV_PATTERN.sub(
+            lambda m: os.environ.get(m.group(1), ""),
+            value,
+        )
+    if isinstance(value, dict):
+        return {key: _resolve_env(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_env(item) for item in value]
+    return value
+
+
+def _extract_param(query: str, key: str, meta: dict):
+    if key in ("urls", "url"):
+        urls = re.findall(r"https?://[^\s，,;）)\]]+", query)
+        if not urls:
+            return None
+        if key == "url":
+            return urls[0]
+        limit = int(meta.get("max_items", 10))
+        return urls[:limit]
+    if key in ("query", "q", "topic"):
+        cleaned = re.sub(
+            r"(请|帮我|调用|使用|tavily|Tavily|接口|API|提取|搜索|爬取|地图|查询)[:：]?\s*",
+            "",
+            query,
+        ).strip()
+        return cleaned or None
+    if key in ("max_results", "max_depth", "max_urls"):
+        numbers = re.findall(r"\d+", query)
+        if numbers:
+            return int(numbers[0])
+        return meta.get("default")
+    if key == "include_images":
+        return bool(meta.get("default", False))
+    if key == "extract_depth":
+        return meta.get("default", "basic")
+    if key == "search_depth":
+        return meta.get("default", "basic")
+    return meta.get("default")
+
+
 class ApiCallerAgent:
     """执行 REST API 调用 Agent"""
 
@@ -154,15 +200,37 @@ class ApiCallerAgent:
         return specs
 
     def _spec_from_query(self, query: str) -> Optional[dict]:
-        """Match a configured API spec by name or alias in the user query."""
+        """Match a configured API spec, resolve env vars, and fill params."""
         lowered = query.lower()
         for key, spec in self._load_specs().items():
             if key in lowered or str(spec.get("name", "")).lower() in lowered:
+                resolved = _resolve_env(spec)
+                url = str(resolved.get("url_template", ""))
+                method = str(resolved.get("method", "GET"))
+                headers = dict(resolved.get("headers", {}) or {})
+                params = {}
+                schema = spec.get("params_schema") or {}
+                if isinstance(schema, dict):
+                    for param_key, meta in schema.items():
+                        value = _extract_param(query, str(param_key), meta or {})
+                        if value is not None:
+                            params[str(param_key)] = value
+                for param_key, value in list(params.items()):
+                    marker = "{" + param_key + "}"
+                    if isinstance(value, list):
+                        rendered = ",".join(str(item) for item in value)
+                    else:
+                        rendered = str(value)
+                    if marker in url:
+                        url = url.replace(marker, rendered)
+                        params.pop(param_key, None)
+                    else:
+                        url = url.replace(marker, rendered)
                 return {
-                    "url": spec.get("url_template", ""),
-                    "method": spec.get("method", "GET"),
-                    "params": {},
-                    "headers": spec.get("headers", {}) or {},
+                    "url": url,
+                    "method": method,
+                    "params": params,
+                    "headers": headers,
                     "spec": spec.get("name"),
                 }
         return None

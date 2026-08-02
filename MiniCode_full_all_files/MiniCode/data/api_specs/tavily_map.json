@@ -1,0 +1,16 @@
+{
+  "name": "Tavily Map",
+  "aliases": ["tavily map", "tavily 地图", "站点地图"],
+  "method": "POST",
+  "url_template": "https://api.tavily.com/map",
+  "headers": {
+    "Authorization": "Bearer ${SHUSHU_SEARCH_API_KEY}",
+    "Content-Type": "application/json"
+  },
+  "params_schema": {
+    "url": {"type": "string"},
+    "query": {"type": "string", "default": ""},
+    "search_depth": {"type": "string", "default": "basic"},
+    "max_results": {"type": "integer", "default": 10}
+  }
+}

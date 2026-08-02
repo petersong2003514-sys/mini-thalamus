@@ -1,0 +1,12 @@
+{
+  "name": "Open-Meteo Forecast",
+  "aliases": ["天气接口", "open-meteo", "open meteo", "天气预报"],
+  "method": "GET",
+  "url_template": "https://api.open-meteo.com/v1/forecast",
+  "headers": {},
+  "params_schema": {
+    "latitude": {"type": "number", "default": "39.9042"},
+    "longitude": {"type": "number", "default": "116.4074"},
+    "current_weather": {"type": "boolean", "default": "true"}
+  }
+}
