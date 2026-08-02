@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 
+from agent_adapter import adapt_agent
 from agent_registry import AgentLoadError, AgentRegistry
 
 
@@ -39,14 +40,17 @@ class AgentRuntime:
 
     def get_agent(self, agent_id: str):
         self.ensure_discovered()
-        return self.registry.get_or_create(agent_id)
+        return adapt_agent(
+            self.registry.get_or_create(agent_id),
+            agent_id=agent_id,
+        )
 
     def load_all(self) -> dict:
         self.ensure_discovered()
         agents = {}
         for agent_id in self.list_agent_ids():
             try:
-                agents[agent_id] = self.registry.get_or_create(agent_id)
+                agents[agent_id] = self.get_agent(agent_id)
             except AgentLoadError:
                 continue
         return agents
