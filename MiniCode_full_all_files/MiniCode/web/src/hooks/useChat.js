@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 
+const WELCOME = { role: 'assistant', text: '你好！我是 MiniCode，有什么可以帮你的？', routeTag: null }
+
 export default function useChat() {
   const [messages, setMessages] = useState([
     { role: 'assistant', text: '你好！我是 MiniCode，有什么可以帮你的？\n\n试试看：\n• 「查一下最近的销售数据」\n• 「帮我分析这个CSV文件画个趋势图」\n• 「上传图片提取文字信息」\n\n👈 左侧可以手动选择 Agent，或让系统自动判断', routeTag: null }
@@ -133,6 +135,37 @@ export default function useChat() {
     setLoading(false)
   }, [])
 
+  const resetToWelcome = useCallback(() => {
+    abortRef.current?.abort()
+    pendingQueryRef.current = ''
+    pendingAgentRef.current = ''
+    currentStepRef.current = 0
+    localStorage.removeItem('minicode_session_id')
+    setSessionId('')
+    setFileCache([])
+    setMessages([WELCOME])
+    setLoading(false)
+  }, [])
+
+  const startNewChat = useCallback(() => {
+    resetToWelcome()
+  }, [resetToWelcome])
+
+  const clearSession = useCallback(async () => {
+    const sid = sessionId
+    resetToWelcome()
+    if (!sid) return
+    try {
+      await fetch('/api/session/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid }),
+      })
+    } catch (e) {
+      // 忽略清理失败，界面仍重置为新对话
+    }
+  }, [resetToWelcome, sessionId])
+
   // 组件卸载时取消进行中的请求
   useEffect(() => {
     return () => { abortRef.current?.abort() }
@@ -176,7 +209,7 @@ export default function useChat() {
     return () => window.removeEventListener('minicode:approve', handler)
   }, [send])
 
-  return { messages, loading, send, abort, sessionId, fileCache }
+  return { messages, loading, send, abort, sessionId, fileCache, startNewChat, clearSession }
 }
 
 // ─── SSE event handler ───

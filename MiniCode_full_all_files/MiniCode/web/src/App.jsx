@@ -35,7 +35,7 @@ class ErrorBoundary extends React.Component {
 
 export default function App() {
   const [selectedAgent, setSelectedAgent] = useState('')
-  const { messages, loading, send, abort, sessionId, fileCache } = useChat()
+  const { messages, loading, send, abort, sessionId, fileCache, startNewChat, clearSession } = useChat()
   const [crystallizing, setCrystallizing] = useState(false)
   const crystalAbortRef = useRef(null)
 
@@ -95,8 +95,23 @@ export default function App() {
           <div className="dot" />
           <h1>ShuShu Agent</h1>
           <div style={{ flex: 1 }} />
+          <button
+            className="crystallize-btn"
+            onClick={startNewChat}
+            title="开启新对话，保留旧会话"
+          >
+            ＋ 新对话
+          </button>
           {sessionId && (
             <>
+              <button
+                className="crystallize-btn"
+                onClick={clearSession}
+                style={{ background: 'rgba(248,113,113,0.15)', borderColor: 'rgba(248,113,113,0.35)', color: '#f87171' }}
+                title="清空当前会话（不可恢复）"
+              >
+                清空当前
+              </button>
               <button
                 className="crystallize-btn"
                 onClick={handleCrystallize}

@@ -500,11 +500,47 @@ class MemoryStore:
     # 清理
     # ═══════════════════════════════════════════════
     def cleanup_session(self, sid: str):
-        """删除 session 所有数据"""
+        """删除 session 所有数据（临时文件 + SQLite turns/session）"""
         import shutil
         d = contained_session_dir(self.root, sid)
         if os.path.isdir(d):
             shutil.rmtree(d)
+        with self.database.connection() as conn:
+            conn.execute(
+                "DELETE FROM long_term_memories WHERE source_session_id=?",
+                (sid,),
+            )
+            conn.execute(
+                "DELETE FROM sessions WHERE session_id=?",
+                (sid,),
+            )
+
+    def purge_expired_sessions(self, cutoff_ts: float) -> int:
+        """删除最近未活跃超过 cutoff 的会话，返回删除数量。"""
+        import shutil
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                "SELECT session_id FROM sessions WHERE updated_at < ?",
+                (float(cutoff_ts),),
+            ).fetchall()
+            ids = [row["session_id"] for row in rows]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                "DELETE FROM long_term_memories "
+                f"WHERE source_session_id IN ({placeholders})",
+                ids,
+            )
+            conn.execute(
+                f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
+                ids,
+            )
+            for sid in ids:
+                d = contained_session_dir(self.root, sid)
+                if os.path.isdir(d):
+                    shutil.rmtree(d)
+            return len(ids)
 
     # ═══════════════════════════════════════════════
     # 内部：JSON 读写

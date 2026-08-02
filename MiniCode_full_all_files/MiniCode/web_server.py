@@ -207,6 +207,15 @@ def _ensure_startup():
         _dynamic_cache["runtime"] = runtime
         _dynamic_cache["registry"] = registry
 
+        # 30 天未活跃的旧会话自动清理
+        try:
+            from memory_service import get_memory_service
+            get_memory_service().store.purge_expired_sessions(
+                time.time() - 30 * 86400
+            )
+        except Exception:
+            pass
+
         # ─── Credential Store（FEATURE_PLAN.md §5）───
         try:
             from credentials import get_store
@@ -931,6 +940,11 @@ async def cleanup_session_endpoint(req: ChatRequest, request: Request = None):
     user_id = _request_user_id(request)
     _resolve_web_session(user_id, sid)
     memory.cleanup_session(sid)
+    try:
+        from memory_service import get_memory_service
+        get_memory_service().sessions.delete(sid)
+    except Exception:
+        pass
     _log.info("会话 %s: 已清理", sid[:8])
     return {"status": "ok", "message": f"会话 {sid[:8]} 已清理"}
 
