@@ -1,0 +1,502 @@
+{
+  "timestamp": "2026-08-02 21:21:27",
+  "unit_tests": {
+    "ok": true,
+    "summary": [
+      "再见！",
+      "  [MCP] 加载 1 个服务器配置: ['filesystem']",
+      "  [MCP] 无配置文件，跳过 MCP 初始化"
+    ]
+  },
+  "router_semantic": {
+    "case_count": 137,
+    "single_intent_accuracy": 0.927007299270073,
+    "macro_f1": 0.9282264354329132,
+    "workflow_exact_rate": null,
+    "multi_step_precision": null,
+    "multi_step_recall": null,
+    "multi_step_f1": null,
+    "rule_accuracy": null,
+    "false_rule_capture_rate": 0.0,
+    "semantic_top3_recall": 0.9927007299270073,
+    "schema_valid_rate": 1.0,
+    "fallback_accuracy": null,
+    "method_distribution": {
+      "semantic": 136,
+      "unavailable": 1
+    },
+    "latency_ms": {
+      "p50": 0.9872999999060994,
+      "p95": 1.363699999274104
+    },
+    "error_count": 0,
+    "slices": {
+      "difficulty": {
+        "easy": {
+          "case_count": 77,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 77
+          }
+        },
+        "hard": {
+          "case_count": 30,
+          "single_intent_accuracy": 0.6666666666666666,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 29,
+            "unavailable": 1
+          }
+        },
+        "medium": {
+          "case_count": 30,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 30
+          }
+        }
+      },
+      "expected_stage": {
+        "semantic": {
+          "case_count": 137,
+          "single_intent_accuracy": 0.927007299270073,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 136,
+            "unavailable": 1
+          }
+        }
+      },
+      "tag": {
+        "ambiguous": {
+          "case_count": 30,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 30
+          }
+        },
+        "confusable": {
+          "case_count": 30,
+          "single_intent_accuracy": 0.6666666666666666,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 29,
+            "unavailable": 1
+          }
+        },
+        "ordinary_single": {
+          "case_count": 77,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 77
+          }
+        }
+      },
+      "agent": {
+        "api_caller": {
+          "case_count": 10,
+          "single_intent_accuracy": 0.8,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 10
+          }
+        },
+        "browser": {
+          "case_count": 14,
+          "single_intent_accuracy": 0.8571428571428571,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 14
+          }
+        },
+        "code": {
+          "case_count": 6,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 6
+          }
+        },
+        "data_analyst": {
+          "case_count": 14,
+          "single_intent_accuracy": 0.7857142857142857,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 13,
+            "unavailable": 1
+          }
+        },
+        "deep_research": {
+          "case_count": 10,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 10
+          }
+        },
+        "docparse": {
+          "case_count": 10,
+          "single_intent_accuracy": 0.8,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 10
+          }
+        },
+        "nl2sql": {
+          "case_count": 10,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 10
+          }
+        },
+        "rag": {
+          "case_count": 14,
+          "single_intent_accuracy": 0.9285714285714286,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 14
+          }
+        },
+        "report_writer": {
+          "case_count": 14,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 14
+          }
+        },
+        "shell": {
+          "case_count": 10,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 10
+          }
+        },
+        "url_fetch": {
+          "case_count": 6,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 6
+          }
+        },
+        "vision": {
+          "case_count": 10,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 10
+          }
+        },
+        "websearch": {
+          "case_count": 9,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "semantic": 9
+          }
+        }
+      }
+    }
+  },
+  "router_live": {
+    "case_count": 50,
+    "single_intent_accuracy": 1.0,
+    "macro_f1": 1.0,
+    "workflow_exact_rate": 0.7,
+    "multi_step_precision": 1.0,
+    "multi_step_recall": 1.0,
+    "multi_step_f1": 1.0,
+    "rule_accuracy": null,
+    "false_rule_capture_rate": 0.0,
+    "semantic_top3_recall": 1.0,
+    "schema_valid_rate": 1.0,
+    "fallback_accuracy": null,
+    "method_distribution": {
+      "llm": 50
+    },
+    "latency_ms": {
+      "p50": 2804.7951999997167,
+      "p95": 3823.823700000503
+    },
+    "error_count": 0,
+    "slices": {
+      "difficulty": {
+        "hard": {
+          "case_count": 50,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 0.7,
+          "method_distribution": {
+            "llm": 50
+          }
+        }
+      },
+      "expected_stage": {
+        "llm": {
+          "case_count": 30,
+          "single_intent_accuracy": null,
+          "workflow_exact_rate": 0.7,
+          "method_distribution": {
+            "llm": 30
+          }
+        },
+        "semantic": {
+          "case_count": 20,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 20
+          }
+        }
+      },
+      "tag": {
+        "confusable": {
+          "case_count": 20,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 20
+          }
+        },
+        "multi_intent": {
+          "case_count": 30,
+          "single_intent_accuracy": null,
+          "workflow_exact_rate": 0.7,
+          "method_distribution": {
+            "llm": 30
+          }
+        }
+      },
+      "agent": {
+        "api_caller": {
+          "case_count": 6,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 0.75,
+          "method_distribution": {
+            "llm": 6
+          }
+        },
+        "browser": {
+          "case_count": 5,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 1.0,
+          "method_distribution": {
+            "llm": 5
+          }
+        },
+        "code": {
+          "case_count": 2,
+          "single_intent_accuracy": null,
+          "workflow_exact_rate": 1.0,
+          "method_distribution": {
+            "llm": 2
+          }
+        },
+        "data_analyst": {
+          "case_count": 3,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 3
+          }
+        },
+        "deep_research": {
+          "case_count": 1,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 1
+          }
+        },
+        "docparse": {
+          "case_count": 5,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 0.0,
+          "method_distribution": {
+            "llm": 5
+          }
+        },
+        "nl2sql": {
+          "case_count": 5,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 0.5,
+          "method_distribution": {
+            "llm": 5
+          }
+        },
+        "rag": {
+          "case_count": 7,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 1.0,
+          "method_distribution": {
+            "llm": 7
+          }
+        },
+        "report_writer": {
+          "case_count": 3,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 3
+          }
+        },
+        "shell": {
+          "case_count": 1,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 1
+          }
+        },
+        "url_fetch": {
+          "case_count": 4,
+          "single_intent_accuracy": null,
+          "workflow_exact_rate": 1.0,
+          "method_distribution": {
+            "llm": 4
+          }
+        },
+        "vision": {
+          "case_count": 1,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": null,
+          "method_distribution": {
+            "llm": 1
+          }
+        },
+        "websearch": {
+          "case_count": 7,
+          "single_intent_accuracy": 1.0,
+          "workflow_exact_rate": 0.6666666666666666,
+          "method_distribution": {
+            "llm": 7
+          }
+        }
+      }
+    }
+  },
+  "capability": {
+    "case_count": 23,
+    "pass_rate": 1.0,
+    "avg_latency_ms": 13477.1,
+    "error_rate": 0.0,
+    "agents": {
+      "api_caller": {
+        "case_count": 3,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 1697.5,
+        "errors": 0
+      },
+      "code": {
+        "case_count": 3,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 1820.9,
+        "errors": 0
+      },
+      "data_analyst": {
+        "case_count": 2,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 5029.7,
+        "errors": 0
+      },
+      "deep_research": {
+        "case_count": 1,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 114599.3,
+        "errors": 0
+      },
+      "docparse": {
+        "case_count": 3,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 4027.2,
+        "errors": 0
+      },
+      "nl2sql": {
+        "case_count": 3,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 1951.7,
+        "errors": 0
+      },
+      "rag": {
+        "case_count": 1,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 58831.4,
+        "errors": 0
+      },
+      "report_writer": {
+        "case_count": 2,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 31406.7,
+        "errors": 0
+      },
+      "shell": {
+        "case_count": 1,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 865.0,
+        "errors": 0
+      },
+      "url_fetch": {
+        "case_count": 1,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 3564.3,
+        "errors": 0
+      },
+      "vision": {
+        "case_count": 1,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 5380.0,
+        "errors": 0
+      },
+      "websearch": {
+        "case_count": 2,
+        "pass_rate": 1.0,
+        "avg_latency_ms": 12683.9,
+        "errors": 0
+      }
+    },
+    "metric_summary": {
+      "contains_any": {
+        "case_count": 15,
+        "pass_rate": 1.0
+      },
+      "http_ok": {
+        "case_count": 1,
+        "pass_rate": 1.0
+      },
+      "keyword_coverage": {
+        "case_count": 1,
+        "pass_rate": 1.0
+      },
+      "rouge_l": {
+        "case_count": 1,
+        "pass_rate": 1.0
+      },
+      "sources_min": {
+        "case_count": 2,
+        "pass_rate": 1.0
+      },
+      "status_success": {
+        "case_count": 1,
+        "pass_rate": 1.0
+      },
+      "structure": {
+        "case_count": 1,
+        "pass_rate": 1.0
+      },
+      "token_f1": {
+        "case_count": 1,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "diff": {
+    "capability_pass_rate": 0.0435,
+    "semantic_top3_recall": 0.0
+  }
+}

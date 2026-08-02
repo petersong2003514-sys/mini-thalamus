@@ -168,6 +168,19 @@ def main(argv=None):
                 f"{meta['avg_latency_ms']} ms |"
             )
         lines.append("")
+    if report["capability"] and report["capability"].get("metric_summary"):
+        lines += [
+            "## Metric summary",
+            "",
+            "| Metric | Cases | Pass rate |",
+            "|---|---:|---:|",
+        ]
+        for metric, meta in sorted(report["capability"]["metric_summary"].items()):
+            lines.append(
+                f"| {metric} | {meta['case_count']} | {meta['pass_rate']} |"
+            )
+        lines.append("")
+
     if report.get("diff"):
         lines += ["## Diff vs previous", "", f"- capability_pass_rate: {report['diff'].get('capability_pass_rate')}",
                   f"- semantic_top3_recall: {report['diff'].get('semantic_top3_recall')}", ""]

@@ -208,12 +208,32 @@ def aggregate(records):
             ),
             "errors": bucket["errors"],
         }
+    metric_buckets = {}
+    for record in records:
+        metric = record.get("metric", "status_success")
+        bucket = metric_buckets.setdefault(metric, {
+            "case_count": 0,
+            "pass_count": 0,
+        })
+        bucket["case_count"] += 1
+        if record["passed"]:
+            bucket["pass_count"] += 1
+    metric_summary = {
+        metric: {
+            "case_count": bucket["case_count"],
+            "pass_rate": round(
+                bucket["pass_count"] / bucket["case_count"], 4
+            ),
+        }
+        for metric, bucket in sorted(metric_buckets.items())
+    }
     return {
         "case_count": total,
         "pass_rate": round(overall_pass / total, 4) if total else 0,
         "avg_latency_ms": round(total_latency / total, 1) if total else 0,
         "error_rate": round(errors / total, 4) if total else 0,
         "agents": agents,
+        "metric_summary": metric_summary,
     }
 
 
@@ -274,6 +294,7 @@ def main(argv=None):
         records.append({
             "id": case["id"],
             "agent": case["agent"],
+            "metric": case.get("metric", "status_success"),
             "query": case["query"],
             "status": result.get("status"),
             "passed": passed,

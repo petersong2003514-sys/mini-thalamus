@@ -205,13 +205,16 @@ def _stream_subprocess(
     event_sink: list,         # 收集 SSE dict
 ) -> dict:
     """执行命令，流式收集 stdout/stderr，返回 {status, exit_code, stdout, stderr}"""
-    bash = shutil.which("bash")
-    if not bash:
-        return {"status": "error", "exit_code": -1,
-                "stdout": "", "stderr": "bash 不可用（Windows 兜底）",
-                "error_code": "cwd_denied"}
-
-    argv = [bash, "-c", cmd]
+    if os.name == "nt":
+        shell_exe = shutil.which("cmd.exe") or "cmd.exe"
+        argv = [shell_exe, "/d", "/s", "/c", cmd]
+    else:
+        bash = shutil.which("bash")
+        if not bash:
+            return {"status": "error", "exit_code": -1,
+                    "stdout": "", "stderr": "bash 不可用",
+                    "error_code": "cwd_denied"}
+        argv = [bash, "-c", cmd]
     preexec = make_preexec_fn()
 
     stdout_lines: list[str] = []
