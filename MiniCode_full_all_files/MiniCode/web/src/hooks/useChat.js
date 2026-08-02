@@ -166,6 +166,29 @@ export default function useChat() {
     }
   }, [resetToWelcome, sessionId])
 
+  const loadSession = useCallback(async (sid) => {
+    if (!sid) return
+    abortRef.current?.abort()
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/session/history?session_id=${encodeURIComponent(sid)}`)
+      const data = await res.json()
+      const restored = []
+      for (const turn of (data.turns || [])) {
+        restored.push({ role: 'user', text: turn.query, routeTag: null })
+        restored.push({ role: 'assistant', text: turn.answer || '', routeTag: null,
+                        stepLabels: turn.agent_id ? [{ step: 1, agent: turn.agent_id }] : [] })
+      }
+      setMessages(restored.length ? restored : [WELCOME])
+      localStorage.setItem('minicode_session_id', sid)
+      setSessionId(sid)
+    } catch (e) {
+      setMessages([WELCOME])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   // 组件卸载时取消进行中的请求
   useEffect(() => {
     return () => { abortRef.current?.abort() }
@@ -209,7 +232,7 @@ export default function useChat() {
     return () => window.removeEventListener('minicode:approve', handler)
   }, [send])
 
-  return { messages, loading, send, abort, sessionId, fileCache, startNewChat, clearSession }
+  return { messages, loading, send, abort, sessionId, fileCache, startNewChat, clearSession, loadSession }
 }
 
 // ─── SSE event handler ───

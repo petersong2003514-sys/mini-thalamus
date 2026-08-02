@@ -35,7 +35,8 @@ class ErrorBoundary extends React.Component {
 
 export default function App() {
   const [selectedAgent, setSelectedAgent] = useState('')
-  const { messages, loading, send, abort, sessionId, fileCache, startNewChat, clearSession } = useChat()
+  const [sessions, setSessions] = useState([])
+  const { messages, loading, send, abort, sessionId, fileCache, startNewChat, clearSession, loadSession } = useChat()
   const [crystallizing, setCrystallizing] = useState(false)
   const crystalAbortRef = useRef(null)
 
@@ -45,6 +46,34 @@ export default function App() {
   }, [])
 
   const handleSend = (text, files, opts) => send(text, selectedAgent, files, opts)
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sessions')
+      const data = await res.json()
+      setSessions(data.sessions || [])
+    } catch (e) {}
+  }, [])
+
+  useEffect(() => { refreshSessions() }, [refreshSessions, sessionId])
+
+  const handleSelectSession = useCallback((sid) => {
+    setSelectedAgent('')
+    loadSession(sid)
+  }, [loadSession])
+
+  const handleDeleteSession = useCallback(async (sid) => {
+    if (!confirm('确定删除该会话？')) return
+    try {
+      await fetch('/api/session/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid }),
+      })
+    } catch (e) {}
+    if (sid === sessionId) startNewChat()
+    refreshSessions()
+  }, [sessionId, startNewChat, refreshSessions])
 
   const handleCrystallize = useCallback(async () => {
     if (!sessionId || crystallizing) return
@@ -136,7 +165,7 @@ export default function App() {
         <ChatMessages messages={messages} loading={loading} />
         <ChatInput onSend={handleSend} loading={loading} onAbort={abort} />
       </div>
-      <Sidebar selected={selectedAgent} onSelect={setSelectedAgent} sessionId={sessionId} fileCache={fileCache} />
+      <Sidebar selected={selectedAgent} onSelect={setSelectedAgent} sessionId={sessionId} fileCache={fileCache} sessions={sessions} activeSessionId={sessionId} onSelectSession={handleSelectSession} onDeleteSession={handleDeleteSession} />
     </div>
     </ErrorBoundary>
   )

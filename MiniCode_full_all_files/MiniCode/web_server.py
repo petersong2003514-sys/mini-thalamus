@@ -974,6 +974,40 @@ async def session_history_endpoint(session_id: str, request: Request = None):
 
 
 # ─── 普通对话接口 ───
+@app.get("/api/sessions")
+async def list_sessions_endpoint(request: Request = None):
+    """Return the current user's saved sessions, newest first."""
+    user_id = _request_user_id(request)
+    with memory.database.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.session_id, s.summary, s.updated_at,
+                   (SELECT COUNT(*) FROM turns t
+                    WHERE t.session_id = s.session_id) AS turn_count,
+                   (SELECT query FROM turns t
+                    WHERE t.session_id = s.session_id
+                    ORDER BY t.sequence_no DESC LIMIT 1) AS last_query
+            FROM sessions s
+            WHERE s.user_id = ?
+            ORDER BY s.updated_at DESC
+            LIMIT 50
+            """,
+            (user_id,),
+        ).fetchall()
+    return {
+        "sessions": [
+            {
+                "session_id": row["session_id"],
+                "summary": row["summary"] or row["last_query"] or "",
+                "last_query": row["last_query"] or "",
+                "turn_count": row["turn_count"] or 0,
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest, request: Request = None):
     """对话接口：自动路由或手动指定 Agent"""

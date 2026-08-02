@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export default function Sidebar({ selected, onSelect, sessionId, fileCache }) {
+export default function Sidebar({ selected, onSelect, sessionId, fileCache, sessions, activeSessionId, onSelectSession, onDeleteSession }) {
   const [agents, setAgents] = useState([])
   const [skills, setSkills] = useState([])
   const [mcpStatus, setMcpStatus] = useState(null)
@@ -83,6 +83,40 @@ export default function Sidebar({ selected, onSelect, sessionId, fileCache }) {
           </div>
         ))}
       </div>
+
+      {/* ── 历史会话 ── */}
+      <h3>🕘 历史会话</h3>
+      {sessions.length === 0 ? (
+        <div className="empty-hint">暂无历史会话，开启新对话后会自动保存</div>
+      ) : (
+        <div className="session-list">
+          {sessions.map(s => (
+            <div key={s.session_id}
+                 className={`session-item ${activeSessionId === s.session_id ? 'active' : ''}`}
+                 role="button" tabIndex={0}
+                 onClick={() => onSelectSession(s.session_id)}
+                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectSession(s.session_id) } }}
+                 style={{display:'flex',alignItems:'center',gap:6,padding:'8px 10px',borderRadius:6,cursor:'pointer',border:'1px solid rgba(124,92,240,0.15)',marginBottom:6,background:'rgba(124,92,240,0.05)'}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  {s.summary || s.last_query || '未命名对话'}
+                </div>
+                <div style={{fontSize:11,color:'#9aa0b5',marginTop:2}}>
+                  {s.turn_count} 轮 · {new Date((s.updated_at || 0) * 1000).toLocaleString()}
+                </div>
+              </div>
+              <button
+                className="session-del"
+                onClick={e => { e.stopPropagation(); onDeleteSession(s.session_id) }}
+                title="删除该会话"
+                style={{background:'transparent',border:'none',cursor:'pointer',color:'#f87171',fontSize:14}}
+              >
+                🗑
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── 文件缓存 ── */}
       {fileCache && fileCache.length > 0 && (
