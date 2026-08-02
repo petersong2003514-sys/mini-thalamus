@@ -8,7 +8,9 @@ latency, and error rate.
 import argparse
 import json
 import os
+import re
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from agent_runtime import AgentRuntime
@@ -25,6 +27,43 @@ def load_cases(path):
             if line.strip():
                 cases.append(json.loads(line))
     return cases
+
+
+def _tokenize(text):
+    return re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]", str(text or "").lower())
+
+
+def _token_f1(pred, ref):
+    p_tokens = _tokenize(pred)
+    r_tokens = _tokenize(ref)
+    if not p_tokens or not r_tokens:
+        return 0.0
+    common = sum((Counter(p_tokens) & Counter(r_tokens)).values())
+    precision = common / len(p_tokens)
+    recall = common / len(r_tokens)
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
+def _rouge_l_f1(pred, ref):
+    a = _tokenize(pred)
+    b = _tokenize(ref)
+    if not a or not b:
+        return 0.0
+    dp = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    lcs = dp[len(a)][len(b)]
+    precision = lcs / len(a)
+    recall = lcs / len(b)
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
 
 
 def _resolve_file(path):
@@ -70,6 +109,18 @@ def _score(case, result):
         ), "http status"
     if metric == "status_success":
         return status == "success", f"status={status}"
+    if metric == "token_f1":
+        f1 = _token_f1(answer, expected[0])
+        return f1 >= float(expected[1]), f"token_f1={round(f1, 3)}"
+    if metric == "keyword_coverage":
+        keywords = list(expected[0])
+        threshold = float(expected[1])
+        hits = sum(1 for keyword in keywords if keyword in answer)
+        coverage = hits / len(keywords) if keywords else 0.0
+        return coverage >= threshold, f"coverage={round(coverage, 3)}"
+    if metric == "rouge_l":
+        rouge = _rouge_l_f1(answer, expected[0])
+        return rouge >= float(expected[1]), f"rouge_l={round(rouge, 3)}"
     return status == "success", f"status={status}"
 
 
@@ -110,6 +161,13 @@ def run_case(runtime, case):
                 "answer": str(exc),
                 "data": {},
             }, (time.perf_counter() - started) * 1000, type(exc).__name__
+    if case.get("agent") == "rag" and case.get("file"):
+        import os as _os
+        kb_name = _os.path.basename(_resolve_file(case["file"])) + ".json"
+        kb_path = _os.path.join("data", "knowledge_base", kb_name)
+        if _os.path.exists(kb_path):
+            _os.remove(kb_path)
+
     latency_ms = (time.perf_counter() - started) * 1000
     return result, latency_ms, ""
 
