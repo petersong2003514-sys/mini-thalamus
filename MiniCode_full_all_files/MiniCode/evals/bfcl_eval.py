@@ -603,7 +603,7 @@ def main(argv=None):
     parser.add_argument(
         "--mode",
         default="auto",
-        choices=["auto", "deepseek-fc", "shushu"],
+        choices=["auto", "deepseek-fc", "shushu", "bfcl-fc"],
     )
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--offset", type=int, default=0)
@@ -683,8 +683,12 @@ def main(argv=None):
         if mode == "auto":
             mode = (
                 "shushu"
-                if category_kind(category) in ("agentic", "multi_turn")
-                else "deepseek-fc"
+                if category_kind(category) == "agentic"
+                else (
+                    "bfcl-fc"
+                    if category_kind(category) == "multi_turn"
+                    else "deepseek-fc"
+                )
             )
         run_offset = args.offset
         if args.resume:
@@ -741,6 +745,22 @@ def main(argv=None):
                 checker, answer, latency, status = run_shushu_agentic(
                     entry, ground_truth, orchestrator
                 )
+            elif mode == "bfcl-fc" and category_kind(category) == "multi_turn":
+                from multi_turn_runner import (
+                    DeepSeekFCModelStep,
+                    run_multi_turn_entry,
+                )
+
+                if client is None:
+                    client, model = deepseek_client()
+                model_step = DeepSeekFCModelStep(client, model)
+                checker, model_results, latency = run_multi_turn_entry(
+                    entry,
+                    model_step,
+                    ground_truth,
+                )
+                answer = json.dumps(model_results, ensure_ascii=False)
+                status = "success"
             elif category_kind(category) == "multi_turn":
                 checker, answer, latency, status = run_shushu_multi_turn(
                     entry, ground_truth, orchestrator

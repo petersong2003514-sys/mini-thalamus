@@ -45,6 +45,21 @@ class SpiderRegressionPromptTests(unittest.TestCase):
 
         self.assertIn("LOWER(column) = LOWER('value')", NL2SQL_SYSTEM_PROMPT)
 
+    def test_fewshot_pool_has_case_insensitive_example(self):
+        from nl2sql_agent.agent.fewshot_examples import FEWSHOT_POOL
+
+        self.assertTrue(any("LOWER(" in ex.sql for ex in FEWSHOT_POOL))
+
+    def test_fewshot_pool_has_minimal_column_example(self):
+        from nl2sql_agent.agent.fewshot_examples import FEWSHOT_POOL
+
+        self.assertTrue(
+            any(
+                ex.sql.strip().startswith("SELECT name, date FROM")
+                for ex in FEWSHOT_POOL
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

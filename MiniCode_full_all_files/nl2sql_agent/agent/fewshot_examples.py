@@ -180,8 +180,26 @@ EX_CTE_2 = FewShotExample(
     description="窗口函数: ROW_NUMBER + PARTITION BY",
 )
 
+EX_SPIDER_CASE = FewShotExample(
+    question="Which country is Jetblue Airways affiliated with?",
+    sql="SELECT Country FROM AIRLINES WHERE LOWER(Airline) = LOWER('JetBlue Airways');",
+    difficulty=Difficulty.EASY,
+    skills=[S.SINGLE_TABLE],
+    tables=["airlines"],
+    description="Spider: 大小写不敏感字符串匹配",
+)
+
+EX_SPIDER_MINIMAL = FewShotExample(
+    question="List the name and date of each battle.",
+    sql="SELECT name, date FROM battle;",
+    difficulty=Difficulty.EASY,
+    skills=[S.SINGLE_TABLE],
+    tables=["battle"],
+    description="Spider: 只返回问题要求的列",
+)
+
 # ═══════════════════════════════════════════════════════════════
-#  完整示例池 (17条: 5 easy + 5 medium + 5 hard + 2 CTE/window)
+#  完整示例池 (19条: 5 easy + 5 medium + 5 hard + 2 CTE/window + 2 Spider)
 # ═══════════════════════════════════════════════════════════════
 
 FEWSHOT_POOL: list[FewShotExample] = [
@@ -189,9 +207,10 @@ FEWSHOT_POOL: list[FewShotExample] = [
     EX_MED_1, EX_MED_2, EX_MED_3, EX_MED_4, EX_MED_5,
     EX_HARD_1, EX_HARD_2, EX_HARD_3, EX_HARD_4, EX_HARD_5,
     EX_CTE_1, EX_CTE_2,
+    EX_SPIDER_CASE, EX_SPIDER_MINIMAL,
 ]
 
 
 def create_default_pool() -> list[FewShotExample]:
-    """创建默认的 Few-shot 示例池（17条: 5 easy + 5 medium + 5 hard + 2 CTE/window）"""
+    """创建默认的 Few-shot 示例池（19条）"""
     return list(FEWSHOT_POOL)
