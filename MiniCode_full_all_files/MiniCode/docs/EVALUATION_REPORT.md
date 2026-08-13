@@ -14,11 +14,13 @@
 | BFCL | multi_turn_long_context | pass_rate | 0.0（3 条） | `evals/results/bfcl-shushu-multi_turn_long_context-20260813-163528.json` | 官方逐轮计分 |
 | BFCL | multi_turn_miss_func | pass_rate | 0.0（3 条） | `evals/results/bfcl-shushu-multi_turn_miss_func-20260813-163747.json` | 官方逐轮计分 |
 | BFCL | multi_turn_miss_param | pass_rate | 0.0（3 条） | `evals/results/bfcl-shushu-multi_turn_miss_param-20260813-164010.json` | 官方逐轮计分 |
+| BFCL | direct_fc multi_turn_base | pass_rate | 1.0（2 条） | `evals/results/bfcl-direct-fc-multi_turn_base-20260813-170912.json` | 直接函数调用探针 |
+| BFCL | direct_fc multi_turn_miss_func | pass_rate | 0.0（1 条） | `evals/results/bfcl-direct-fc-multi_turn_miss_func-20260813-170956.json` | 直接函数调用探针 |
 | BFCL | simple_python (shushu) | pass_rate | 0.6 | `evals/results/bfcl-shushu-simple_python-20260813-151930.json` | 进化后 |
 | BEIR | nfcorpus | nDCG@10 / MRR@10 | 0.4495 / 0.3927 | `evals/results/beir-nfcorpus-20260813-152043.json` | 已验证 |
 | BEIR | scifact | nDCG@10 / MRR@10 | 0.7008 / 0.6622 | `evals/results/beir-scifact-20260813-152044.json` | 已验证 |
 | Spider | dev | execution_accuracy | 0.9（50 库分层） | evals/results/spider-dev-20260813-164220.json | 已验（20 个 db_id 覆盖 50 条） |
-| Spider | failure_regression | execution_accuracy | 0.0（5 条，可复现） | evals/results/spider-dev-20260813-165013.json | 失败回归集 |
+| Spider | failure_regression | execution_accuracy | 0.6（3/5，prompt 修复后） | evals/results/spider-dev-20260813-171242.json | 失败回归集 |
 
 ## 主要失败类型
 
@@ -43,3 +45,5 @@
 
 - Spider dev 数据：官方 Google Drive 链接仍失效，已改用 hf-mirror 镜像（xlangai/spider parquet + multispider-processed SQLite）构造本地 zip，check-data = 1034 cases / 20 databases；50 条分层样本 Execution Accuracy = 0.9（45/50，失败含 voter_1、flight_2、battle_death、dog_kennels、employee_hire_evaluation 等语义差异）。
 - BFCL multi-turn：官方 per-turn 执行计分器已 vendored 并接入，4 类各 3 条冒烟 pass_rate = 0.0；全量 4 类约 800 条尚未跑。
+- Spider 回归集驱动修复：system prompt 增加最小列选择、原始大小写、`IN (SELECT ...)`、`COUNT(*)` 规则，5 条回归集从 0/5 提升到 3/5；`flight_2` 仍未采用 LOWER 匹配，`battle_death` 的 gold 与问题列选择不一致。
+- BFCL 直接函数调用探针：官方同款多步执行 + 执行反馈下，DeepSeek FC 在 `multi_turn_base` 2/2 通过，说明当前 0.0 主要是架构/工具接入问题，不是模型完全做不到。
