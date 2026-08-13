@@ -278,6 +278,7 @@ def main(argv=None):
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--db-id")
+    parser.add_argument("--rows-file")
     parser.add_argument("--schema-strategy", default="full")
     parser.add_argument("--skip-disambiguate", action="store_true")
     parser.add_argument("--check-data", action="store_true")
@@ -291,6 +292,13 @@ def main(argv=None):
         offset=args.offset,
         db_filter=args.db_id,
     )
+    if args.rows_file:
+        with open(args.rows_file, encoding="utf-8") as handle:
+            rows = json.load(handle)
+        if args.offset:
+            rows = rows[args.offset :]
+        if args.limit:
+            rows = rows[: args.limit]
     if args.check_data:
         databases = [
             name for name in os.listdir(os.path.join(root, "database"))
