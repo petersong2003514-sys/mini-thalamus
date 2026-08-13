@@ -18,6 +18,7 @@
 | BEIR | nfcorpus | nDCG@10 / MRR@10 | 0.4495 / 0.3927 | `evals/results/beir-nfcorpus-20260813-152043.json` | 已验证 |
 | BEIR | scifact | nDCG@10 / MRR@10 | 0.7008 / 0.6622 | `evals/results/beir-scifact-20260813-152044.json` | 已验证 |
 | Spider | dev | execution_accuracy | 0.9（50 库分层） | evals/results/spider-dev-20260813-164220.json | 已验（20 个 db_id 覆盖 50 条） |
+| Spider | failure_regression | execution_accuracy | 0.0（5 条，可复现） | evals/results/spider-dev-20260813-165013.json | 失败回归集 |
 
 ## 主要失败类型
 
