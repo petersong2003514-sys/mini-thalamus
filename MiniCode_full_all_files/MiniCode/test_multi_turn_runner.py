@@ -57,6 +57,38 @@ class MultiTurnRunnerTests(unittest.TestCase):
         self.assertFalse(checker["valid"])
         self.assertIn("empty_turn_model_response", checker["error_type"])
 
+    def test_add_missed_functions_injects_tools_at_holdout_turn(self):
+        from multi_turn_runner import add_missed_functions
+
+        tools = [{"type": "function", "function": {"name": "cd"}}]
+        docs_by_name = {
+            "sort": {
+                "name": "sort",
+                "description": "Sort a file.",
+                "parameters": {"type": "dict", "properties": {}},
+            }
+        }
+        updated = add_missed_functions(
+            tools,
+            {"3": ["sort"]},
+            3,
+            docs_by_name,
+        )
+        names = [tool["function"]["name"] for tool in updated]
+        self.assertIn("sort", names)
+
+    def test_add_missed_functions_ignores_other_turns(self):
+        from multi_turn_runner import add_missed_functions
+
+        tools = [{"type": "function", "function": {"name": "cd"}}]
+        updated = add_missed_functions(
+            tools,
+            {"3": ["sort"]},
+            2,
+            {},
+        )
+        self.assertEqual([tool["function"]["name"] for tool in updated], ["cd"])
+
 
 if __name__ == "__main__":
     unittest.main()

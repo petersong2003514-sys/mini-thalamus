@@ -60,6 +60,38 @@ def build_tools(involved_classes):
     return tools
 
 
+def _load_docs(class_name):
+    with open(
+        os.path.join(DOC_DIR, DOC_FILE_MAPPING[class_name]),
+        encoding="utf-8",
+    ) as handle:
+        return [json.loads(line) for line in handle if line.strip()]
+
+
+def add_missed_functions(tools, missed_function, turn_index, docs_by_name):
+    names = missed_function.get(str(turn_index), [])
+    if not names:
+        return tools
+    existing = {tool["function"]["name"] for tool in tools}
+    for name in names:
+        if name in existing or name not in docs_by_name:
+            continue
+        doc = docs_by_name[name]
+        params = copy.deepcopy(doc["parameters"])
+        params["type"] = "object"
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": doc["description"],
+                    "parameters": params,
+                },
+            }
+        )
+    return tools
+
+
 def ast_literal(value):
     if isinstance(value, dict):
         return ast.Dict(
@@ -110,6 +142,11 @@ def run_multi_turn_entry(entry, model_step, ground_truth):
 
     tools = build_tools(entry.get("involved_classes", []))
     involved_classes = entry.get("involved_classes", [])
+    docs_by_name = {
+        doc["name"]: doc
+        for class_name in involved_classes
+        for doc in _load_docs(class_name)
+    }
     initial_config = entry.get("initial_config", {})
     long_context = "long_context" in entry["id"]
     model_name = "shushu-fc-direct"
@@ -134,12 +171,23 @@ def run_multi_turn_entry(entry, model_step, ground_truth):
     ]
     model_results = []
     started = time.perf_counter()
-    for turn in entry.get("question", []):
+    for turn_index, turn in enumerate(entry.get("question", [])):
+        tools = add_missed_functions(
+            tools,
+            entry.get("missed_function", {}),
+            turn_index,
+            docs_by_name,
+        )
         question = "\n".join(
             message.get("content", "")
             for message in turn
             if message.get("content")
         )
+        if not question and str(turn_index) in entry.get("missed_function", {}):
+            question = (
+                "I have updated some more functions you can choose from. "
+                "What about now?"
+            )
         calls = []
         if question:
             messages.append({"role": "user", "content": question})

@@ -122,6 +122,10 @@ def cast_properties(properties):
             if "properties" in value:
                 value["properties"] = cast_properties(value["properties"])
             elif "items" in value:
+                if "properties" in value["items"]:
+                    value["items"]["properties"] = cast_properties(
+                        value["items"]["properties"]
+                    )
                 value["items"]["type"] = GORILLA_TO_OPENAPI.get(
                     value["items"]["type"], "string"
                 )
@@ -273,6 +277,45 @@ def resolve_value(node):
     return None
 
 
+def category_for_entry(entry):
+    return re.sub(r"_\d+(-\d+)*$", "", entry["id"])
+
+
+def coerce_args_to_schema(args, properties):
+    coerced = dict(args)
+    for key, value in args.items():
+        prop = properties.get(key)
+        if not prop:
+            continue
+        expected = prop.get("type")
+        if expected == "float" and isinstance(value, int) and not isinstance(value, bool):
+            coerced[key] = float(value)
+        elif expected in ("array", "list") and isinstance(value, list):
+            items = prop.get("items", {})
+            item_type = items.get("type")
+            if item_type == "float":
+                coerced[key] = [
+                    float(item)
+                    if isinstance(item, int) and not isinstance(item, bool)
+                    else item
+                    for item in value
+                ]
+            elif item_type in ("object", "dict") and isinstance(
+                items.get("properties"), dict
+            ):
+                coerced[key] = [
+                    coerce_args_to_schema(item, items["properties"])
+                    if isinstance(item, dict)
+                    else item
+                    for item in value
+                ]
+        elif expected in ("object", "dict") and isinstance(
+            prop.get("properties"), dict
+        ) and isinstance(value, dict):
+            coerced[key] = coerce_args_to_schema(value, prop["properties"])
+    return coerced
+
+
 def ast_literal(value):
     if isinstance(value, dict):
         return py_ast.Dict(
@@ -314,6 +357,15 @@ def run_deepseek_fc(entry, ground_truth, client, model):
             try:
                 name = list(item.keys())[0]
                 args = json.loads(item[name]) if isinstance(item[name], str) else item[name]
+                properties = next(
+                    (
+                        fn["parameters"]["properties"]
+                        for fn in entry["function"]
+                        if fn["name"] == name
+                    ),
+                    {},
+                )
+                args = coerce_args_to_schema(args, properties)
                 decoded.append({name: args})
             except (json.JSONDecodeError, TypeError, IndexError):
                 return {
@@ -335,9 +387,7 @@ def run_deepseek_fc(entry, ground_truth, client, model):
             decoded,
             ground_truth,
             Language.PYTHON,
-            re.sub(r"_\d+-\d+-\d+$", "", entry["id"])
-            if entry["id"].startswith("live_")
-            else "live_simple",
+            category_for_entry(entry),
             "deepseek-chat-fc",
         ),
         raw,

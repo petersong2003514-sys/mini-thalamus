@@ -7,7 +7,9 @@ import sys
 import time
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 PYTHON = sys.executable
 MULTI_TURN_CATEGORIES = (
     "multi_turn_base,multi_turn_long_context,multi_turn_miss_func,"
@@ -56,7 +58,65 @@ def run(cmd, log_path):
         raise SystemExit(f"command failed ({proc.returncode}): {cmd}")
 
 
+def build_full_commands(available_categories):
+    cmds = []
+    for category in available_categories:
+        if category.startswith("multi_turn_"):
+            cmds.append(
+                [
+                    PYTHON,
+                    "evals/bfcl_eval.py",
+                    "--category",
+                    category,
+                    "--mode",
+                    "bfcl-fc",
+                ]
+            )
+        elif category in ("memory", "web_search"):
+            cmds.append(
+                [
+                    PYTHON,
+                    "evals/bfcl_eval.py",
+                    "--category",
+                    category,
+                    "--mode",
+                    "shushu",
+                ]
+            )
+        else:
+            cmds.append(
+                [
+                    PYTHON,
+                    "evals/bfcl_eval.py",
+                    "--category",
+                    category,
+                    "--mode",
+                    "deepseek-fc",
+                ]
+            )
+    cmds.append(
+        [PYTHON, "evals/beir_eval.py", "--dataset", "nfcorpus,scifact", "--bm25"]
+    )
+    cmds.append([PYTHON, "evals/spider_eval.py", "--schema-strategy", "full"])
+    return cmds
+
+
+def list_available_categories():
+    proc = subprocess.run(
+        [PYTHON, "evals/bfcl_eval.py", "--list-categories"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    payload = json.loads(proc.stdout)
+    return payload["available"]
+
+
 def commands(stage, bfcl_limit, spider_limit):
+    if stage == "full":
+        return build_full_commands(list_available_categories())
+
     cmds = []
     multi_turn_args = [
         PYTHON,
