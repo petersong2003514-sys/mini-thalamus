@@ -21,7 +21,11 @@ class DataAnalystSessionStateTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_dataset_path_is_recovered_from_session_state(self):
-        agent = module.DataAnalystAgent()
+        # The agent builds an OpenAI client in __init__. Every method that would
+        # use it is replaced below, so the client is stubbed: this test is about
+        # session state, and it has to run without an API key.
+        with patch.object(module, "OpenAI"):
+            agent = module.DataAnalystAgent()
         agent._generate_analysis_code = lambda query, path, profile: "print('ok')"
         agent._sandbox_execute = lambda code: {
             "stdout": "ok",

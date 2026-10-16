@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from mini_thalamus.agent_adapter import StandardAgentAdapter, adapt_agent, normalize_agent_result
 from mini_thalamus.agent_runtime import AgentRuntime
@@ -75,9 +76,17 @@ class AgentAdapterTests(unittest.TestCase):
 
     def test_runtime_returns_standard_adapter(self):
         runtime = AgentRuntime()
-        runtime.discover()
 
-        agent = runtime.get_agent("websearch")
+        # websearch is the sample agent here, and it builds an OpenAI client in
+        # __init__. The assertion is about the adapter the runtime wraps it in,
+        # so the client is stubbed and this runs without an API key. Both names
+        # are patched: the loader may import the module itself, in which case
+        # its `from openai import OpenAI` is what has to resolve to the stub.
+        with patch("openai.OpenAI"), patch(
+            "mini_thalamus.agents.websearch_agent.OpenAI"
+        ):
+            runtime.discover()
+            agent = runtime.get_agent("websearch")
 
         self.assertIsInstance(agent, StandardAgentAdapter)
 
