@@ -6,7 +6,7 @@
 <sub>一个层叠路由器负责分派，一个审批检查点负责放行。</sub></p>
 
 <p>
-<a href="https://github.com/petersong/mini-thalamus/actions/workflows/ci.yml"><img src="https://github.com/petersong/mini-thalamus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/petersong2003514-sys/mini-thalamus/actions/workflows/ci.yml"><img src="https://github.com/petersong2003514-sys/mini-thalamus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <img src="https://img.shields.io/badge/python-3.10%20%7C%203.12-3776ab?logo=python&logoColor=white" alt="Python 3.10 | 3.12">
 <img src="https://img.shields.io/badge/tests-293%20passing-3fb950" alt="293 tests passing">
 <img src="https://img.shields.io/badge/agents-14-6d28d9" alt="14 agents">
