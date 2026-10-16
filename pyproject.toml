@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mini-thalamus"
 version = "0.1.0"
-description = "A router-first multi-agent platform: a cascaded router dispatches each request to one of fifteen specialist agents, behind a single approval checkpoint."
+description = "A router-first multi-agent platform: a cascaded router dispatches each request to one of fourteen specialist agents, behind a single approval checkpoint."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
