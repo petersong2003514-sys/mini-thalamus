@@ -1,0 +1,15 @@
+{
+  "name": "Tavily Extract",
+  "aliases": ["tavily extract", "tavily 提取", "提取网页内容"],
+  "method": "POST",
+  "url_template": "https://api.tavily.com/extract",
+  "headers": {
+    "Authorization": "Bearer ${MT_SEARCH_API_KEY}",
+    "Content-Type": "application/json"
+  },
+  "params_schema": {
+    "urls": {"type": "array", "max_items": 10},
+    "extract_depth": {"type": "string", "default": "basic"},
+    "include_images": {"type": "boolean", "default": false}
+  }
+}

@@ -8,6 +8,9 @@
 **/credentials.json
 **/credentials.enc
 **/*credentials*backup*
+# MCP server config is machine-specific (absolute paths to local tools);
+# the .example file next to it documents the expected shape.
+**/.mcp.json
 
 # ---------------------------------------------------------------------------
 # Archives and local delivery bundles.
@@ -61,7 +64,7 @@ CLAUDE.md
 # ---------------------------------------------------------------------------
 # Internal process artifacts (agent-generated plans/specs, not public docs).
 # ---------------------------------------------------------------------------
-docs/superpowers/
+**/docs/superpowers/
 
 # ---------------------------------------------------------------------------
 # Scratch, one-off patch scripts and exploration probes.
@@ -87,9 +90,11 @@ archive/
 # Large benchmark corpora: fetched on demand by evals/download_*.py.
 # Not committed — 150 MB+ combined.
 # ---------------------------------------------------------------------------
-**/evals/external/beir_data/
-**/evals/external/spider_data/
-**/evals/external/gaia/
+# Note the trailing "/*": excluding the directory itself would stop git from
+# descending into it, which would make the negations below unreachable.
+**/evals/external/beir_data/*
+**/evals/external/spider_data/*
+**/evals/external/gaia/*
 
 # ...but always ship the provenance notes that document where the corpora
 # come from and how to re-fetch them.

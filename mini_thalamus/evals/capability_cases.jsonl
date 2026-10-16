@@ -1,0 +1,23 @@
+{"id": "api-001", "agent": "api_caller", "query": "调用 Tavily Extract 提取 https://example.com 的内容", "metric": "http_ok", "expected": [], "min_chars": 5, "timeout": 60, "network": true}
+{"id": "api-002", "agent": "api_caller", "query": "查询美元汇率", "metric": "contains_any", "expected": ["success"], "min_chars": 5, "timeout": 60, "network": true}
+{"id": "api-003", "agent": "api_caller", "query": "调用 Tavily Search 搜索最新人工智能新闻", "metric": "contains_any", "expected": ["results"], "min_chars": 5, "timeout": 60, "network": true}
+{"id": "code-001", "agent": "code", "query": "用代码计算斐波那契数列第10项（从0开始），并输出结果", "metric": "contains_any", "expected": ["55"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "code-002", "agent": "code", "query": "用代码对列表 [3,1,2] 排序并输出结果", "metric": "contains_any", "expected": ["1, 2, 3", "[1, 2, 3]", "1 2 3"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "code-003", "agent": "code", "query": "写一个 Python 函数 reverse(s) 返回反转字符串，并输出 reverse('hello')", "metric": "contains_any", "expected": ["olleh"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "data_analyst-001", "agent": "data_analyst", "query": "统计这个CSV的总销售额", "metric": "contains_any", "expected": ["600"], "min_chars": 5, "timeout": 120, "network": false, "file": "mini_thalamus/evals/data/sales_eval.csv"}
+{"id": "data_analyst-002", "agent": "data_analyst", "query": "统计这个CSV的行数", "metric": "contains_any", "expected": ["3"], "min_chars": 5, "timeout": 120, "network": false, "file": "mini_thalamus/evals/data/sales_eval.csv"}
+{"id": "deep_research-001", "agent": "deep_research", "query": "对比 Python 和 Rust 的优缺点，给出选型建议", "metric": "status_success", "expected": [], "min_chars": 100, "timeout": 240, "network": true}
+{"id": "docparse-001", "agent": "docparse", "query": "这份合同的主要内容是什么？", "metric": "contains_any", "expected": ["合同", "采购"], "min_chars": 30, "timeout": 120, "network": false, "file": "mini_thalamus/test_doc.txt"}
+{"id": "docparse-002", "agent": "docparse", "query": "这份合同的主要内容是什么？", "metric": "token_f1", "expected": ["产品采购合同 Xbox Series X 游戏主机 3C 认证", 0.12], "min_chars": 30, "timeout": 120, "network": false, "file": "mini_thalamus/test_doc.txt"}
+{"id": "docparse-003", "agent": "docparse", "query": "这份合同的主要内容是什么？", "metric": "rouge_l", "expected": ["产品采购合同 Xbox Series X 游戏主机 3C 认证 质量保修", 0.15], "min_chars": 30, "timeout": 120, "network": false, "file": "mini_thalamus/test_doc.txt"}
+{"id": "nl2sql-001", "agent": "nl2sql", "query": "查询已完成订单的总销售额", "metric": "contains_any", "expected": ["16680753.06", "16680753"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "nl2sql-002", "agent": "nl2sql", "query": "查询订单总数", "metric": "contains_any", "expected": ["2541"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "nl2sql-003", "agent": "nl2sql", "query": "查询所有用户数量", "metric": "contains_any", "expected": ["500"], "min_chars": 5, "timeout": 120, "network": false}
+{"id": "rag-001", "agent": "rag", "query": "员工请假需要提前几天？", "metric": "contains_any", "expected": ["3"], "min_chars": 1, "timeout": 120, "network": false, "file": "mini_thalamus/evals/data/leave_policy.txt"}
+{"id": "report-001", "agent": "report_writer", "query": "写一份关于本周项目进度的周报", "metric": "structure", "expected": [3], "min_chars": 200, "timeout": 120, "network": false}
+{"id": "report-002", "agent": "report_writer", "query": "写一份本周项目进度周报", "metric": "keyword_coverage", "expected": [["项目", "进度", "计划", "风险"], 0.5], "min_chars": 100, "timeout": 120, "network": false}
+{"id": "shell-001", "agent": "shell", "query": "运行 echo 42", "metric": "contains_any", "expected": ["42"], "min_chars": 1, "timeout": 60, "network": false}
+{"id": "url_fetch-001", "agent": "url_fetch", "query": "读取 https://example.com 的正文并总结要点", "metric": "contains_any", "expected": ["Example Domain", "example.com"], "min_chars": 10, "timeout": 60, "network": true}
+{"id": "vision-001", "agent": "vision", "query": "提取图片中的文字", "metric": "contains_any", "expected": ["123456789"], "min_chars": 1, "timeout": 120, "network": false, "file": "mini_thalamus/evals/data/ocr_sample.png"}
+{"id": "websearch-001", "agent": "websearch", "query": "搜索最新的人工智能领域新闻，列出 3 个来源链接", "metric": "sources_min", "expected": [1], "min_chars": 20, "timeout": 120, "network": true}
+{"id": "websearch-002", "agent": "websearch", "query": "搜索北京今天的天气", "metric": "sources_min", "expected": [1], "min_chars": 30, "timeout": 120, "network": true}
