@@ -1,7 +1,11 @@
 """Uniform input/output adapter shared by every Agent instance."""
 
+import logging
+
 from base_agent import AgentContext, AgentResult
 
+
+_log = logging.getLogger(__name__)
 
 STANDARD_STATUSES = {"success", "partial", "fallback", "error", "blocked", "skipped"}
 USABLE_PARTIAL_STATUSES = {"partial", "fallback"}
@@ -38,32 +42,87 @@ def normalize_agent_result(raw, *, agent_id: str = "") -> dict:
     return result
 
 
-class StandardAgentAdapter:
-    """Wrap any agent behind a single run(query, context) -> AgentResult contract."""
+def _has_payload(result: dict) -> bool:
+    """A result with neither an answer nor data is unusable to the caller."""
+    return bool(result.get("answer") or result.get("data"))
 
-    def __init__(self, agent, agent_id: str = ""):
+
+class StandardAgentAdapter:
+    """Wrap any agent behind a single run(query, context) -> AgentResult contract.
+
+    Every Agent invocation in the platform funnels through here, which makes it
+    the one place that can report an execution outcome to the registry -- and
+    that is what feeds the circuit breaker. A failure anywhere downstream becomes
+    a recorded failure; a healthy run closes the breaker again.
+    """
+
+    def __init__(
+        self,
+        agent,
+        agent_id: str = "",
+        registry=None,
+        epoch: int = None,
+    ):
         self._agent = agent
+        self._registry = registry
         self.agent_id = (
             agent_id
             or getattr(agent, "agent_id", "")
             or type(agent).__name__
         )
+        # The generation this adapter was handed. Outcomes reported later are
+        # tagged with it so that an instance replaced mid-flight cannot put its
+        # failure on the account of the version that replaced it.
+        self._epoch = epoch
+        if self._registry is not None and self._epoch is None:
+            self._epoch = self._registry.epoch_of(self.agent_id)
 
     def run(self, query: str, context: dict = None) -> dict:
         if isinstance(context, AgentContext):
             context = context.to_dict()
-        raw = self._agent.run(query, context=context)
-        return normalize_agent_result(raw, agent_id=self.agent_id)
+        try:
+            raw = self._agent.run(query, context=context)
+        except Exception as exc:
+            self._report_failure(exc)
+            raise
+
+        result = normalize_agent_result(raw, agent_id=self.agent_id)
+        if result.get("status") == "error" or not _has_payload(result):
+            self._report_failure(result.get("answer") or "empty result")
+        else:
+            self._report_success()
+        return result
+
+    def _report_failure(self, error) -> None:
+        if self._registry is None:
+            return
+        try:
+            self._registry.record_failure(
+                self.agent_id, error, epoch=self._epoch
+            )
+        except Exception:
+            # Reporting must never be the thing that breaks a request.
+            _log.debug("record_failure failed", exc_info=True)
+
+    def _report_success(self) -> None:
+        if self._registry is None:
+            return
+        try:
+            self._registry.record_success(self.agent_id, epoch=self._epoch)
+        except Exception:
+            _log.debug("record_success failed", exc_info=True)
 
     def __getattr__(self, name):
         return getattr(self._agent, name)
 
 
-def adapt_agent(agent, agent_id: str = ""):
+def adapt_agent(agent, agent_id: str = "", registry=None, epoch: int = None):
     """Idempotently wrap an Agent instance with the standard adapter."""
     if isinstance(agent, StandardAgentAdapter):
         return agent
-    return StandardAgentAdapter(agent, agent_id=agent_id)
+    return StandardAgentAdapter(
+        agent, agent_id=agent_id, registry=registry, epoch=epoch
+    )
 
 
 __all__ = ["StandardAgentAdapter", "adapt_agent", "normalize_agent_result"]

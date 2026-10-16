@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -11,7 +12,7 @@ def code_call():
 class ExecutionPolicyAutoApproveTests(unittest.TestCase):
     def test_auto_approve_allows_workspace_write_with_local_backend(self):
         policy = ExecutionPolicy(
-            workspace_root=r"D:\实习",
+            workspace_root=tempfile.gettempdir(),
             local_execution_enabled=True,
             auto_approve=True,
         )
@@ -26,7 +27,7 @@ class ExecutionPolicyAutoApproveTests(unittest.TestCase):
 
     def test_auto_approve_still_denies_without_execution_backend(self):
         policy = ExecutionPolicy(
-            workspace_root=r"D:\实习",
+            workspace_root=tempfile.gettempdir(),
             local_execution_enabled=False,
             auto_approve=True,
         )

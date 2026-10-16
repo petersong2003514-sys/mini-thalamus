@@ -326,5 +326,124 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.assertTrue(result["trace"][0]["retry"])
 
 
+
+    def test_missing_agent_becomes_skipped_step_not_crash(self):
+        executor = WorkflowExecutor(runtime=FakeRuntime({}))
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "query data"),
+        ]))
+        result = executor.execute(route, original_query="query data")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("自动跳过", result.get("answer", ""))
+
+    def test_replan_hook_replaces_pending_calls_after_failure(self):
+        nl2sql = RecordingAgent({
+            "status": "error",
+            "answer": "db down",
+            "summary": "db down",
+        })
+        report = RecordingAgent({
+            "status": "success",
+            "answer": "recovered report",
+            "summary": "ok",
+            "data": {"report": "final.md"},
+        })
+        executor = WorkflowExecutor(
+            runtime=FakeRuntime({
+                "nl2sql": nl2sql,
+                "report_writer": report,
+            })
+        )
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "查询"),
+            call(
+                "step_2",
+                "report_generation",
+                "report_writer",
+                "写报告",
+                depends_on=["step_1"],
+                input_refs=["step_1.data.structured"],
+            ),
+        ]))
+
+        replan_infos = []
+
+        def fake_replan(info):
+            replan_infos.append(info)
+            if info.get("attempt", 0) > 0:
+                return None
+            return decision(route_payload([
+                call(
+                    "rp0_step_2",
+                    "report_generation",
+                    "report_writer",
+                    "基于已有结果重写报告",
+                ),
+            ]))
+
+        result = executor.execute(
+            route,
+            original_query="查数据写报告",
+            replan_fn=fake_replan,
+        )
+
+        # 失败步骤执行一次,重规划后的新步骤执行一次
+        self.assertEqual(len(nl2sql.calls), 1)
+        self.assertEqual(nl2sql.calls[0]["query"], "查询")
+        self.assertEqual(len(report.calls), 1)
+        self.assertEqual(report.calls[0]["query"], "基于已有结果重写报告")
+        # 最终状态只按最终计划统计 → 成功
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["answer"], "recovered report")
+        self.assertEqual(
+            [entry["agent_id"] for entry in result["trace"]],
+            ["nl2sql", "report_writer"],
+        )
+        # 钩子逐批询问是否重规划;第二次无失败应返回 None,不重复执行
+        self.assertEqual(len(replan_infos), 2)
+        self.assertIn("step_1", replan_infos[0]["batch_call_ids"])
+        self.assertIn("rp0_step_2", replan_infos[1]["batch_call_ids"])
+        self.assertEqual(
+            result["results"]["step_1"]["status"], "error"
+        )
+        self.assertIn("rp0_step_2", result["results"])
+
+    def test_replan_not_called_without_hook(self):
+        nl2sql = RecordingAgent({
+            "status": "error",
+            "answer": "db down",
+            "summary": "db down",
+        })
+        report = RecordingAgent({
+            "status": "success",
+            "answer": "independent",
+            "summary": "ok",
+        })
+        executor = WorkflowExecutor(
+            runtime=FakeRuntime({
+                "nl2sql": nl2sql,
+                "report_writer": report,
+            })
+        )
+        route = decision(route_payload([
+            call("step_1", "database_query", "nl2sql", "查询"),
+            call(
+                "step_2",
+                "report_generation",
+                "report_writer",
+                "写独立说明",
+                depends_on=["step_1"],
+                input_refs=["step_1.data.structured"],
+            ),
+        ]))
+        result = executor.execute(route, original_query="查询")
+        # 无 replan_fn 时保持原有跳过行为
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["results"]["step_2"]["status"], "skipped")
+        self.assertEqual(report.calls, [])
+
+
+
+
 if __name__ == "__main__":
     unittest.main()

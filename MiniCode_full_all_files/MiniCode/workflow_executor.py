@@ -8,6 +8,9 @@ from route_schema import RouteDecision
 
 
 class WorkflowExecutor:
+    # 单次请求最多重规划次数(安全护栏); 是否启用由 Orchestrator 配置决定
+    _REPLAN_LIMIT = 3
+
     def __init__(self, runtime):
         self.runtime = runtime
 
@@ -20,7 +23,15 @@ class WorkflowExecutor:
         approved_call_ids=None,
         context_provider=None,
         on_stage=None,
+        replan_fn=None,
     ) -> dict:
+        """执行 DAG。
+
+        replan_fn 为可选的运行时重规划回调: 每批执行完后被调用,入参为
+        dict(decision/original_query/results/batch_call_ids/pending_calls/
+        completed_ids/attempt),若返回一个新 RouteDecision,则用新计划替换
+        剩余节点并重新开始拓扑执行(已完成结果保留,供新计划引用)。
+        """
         approved = set(approved_call_ids or [])
         base_context = dict(context or {})
         results: dict[str, dict] = {}
@@ -28,6 +39,7 @@ class WorkflowExecutor:
         ordered = self._topological_calls(decision)
         pending_ids = [call.call_id for call in ordered]
         completed: set[str] = set()
+        replan_count = 0
 
         while pending_ids:
             ready = [
@@ -164,18 +176,55 @@ class WorkflowExecutor:
                 on_stage=on_stage,
             )
 
+            # ── 运行时重规划钩子(MAO): 依据本批结果重写下游节点 ──
+            if (
+                replan_fn is not None
+                and pending_ids
+                and replan_count < self._REPLAN_LIMIT
+            ):
+                new_decision = replan_fn({
+                    "decision": decision,
+                    "original_query": original_query,
+                    "results": results,
+                    "batch_call_ids": [call.call_id for call in ready],
+                    "pending_calls": [
+                        call for call in ordered if call.call_id in pending_ids
+                    ],
+                    "completed_ids": sorted(completed),
+                    "attempt": replan_count,
+                })
+                if new_decision is not None and new_decision.calls:
+                    if on_stage is not None:
+                        on_stage("replan", {
+                            "from": len(completed),
+                            "to": len(new_decision.calls),
+                            "reason": "部分步骤未达预期，重新规划剩余任务",
+                        })
+                    ordered = self._topological_calls(new_decision)
+                    pending_ids = [call.call_id for call in ordered]
+                    completed = set()
+                    decision = new_decision
+                    replan_count += 1
+                    continue
+
             for call in ready:
                 completed.add(call.call_id)
                 pending_ids.remove(call.call_id)
 
+        # 最终状态只统计最终计划(可能是重规划后的)的结果;
+        # 重规划覆盖掉的旧失败步骤不再计入 partial。
+        final_ids = {call.call_id for call in decision.calls}
+        relevant = {
+            call_id: result
+            for call_id, result in results.items()
+            if call_id in final_ids
+        }
         successful = [
-            result
-            for result in results.values()
+            result for result in relevant.values()
             if result.get("status") == "success"
         ]
         unsuccessful = [
-            result
-            for result in results.values()
+            result for result in relevant.values()
             if result.get("status") != "success"
         ]
         if successful and unsuccessful:
@@ -185,7 +234,7 @@ class WorkflowExecutor:
         else:
             status = "error"
         final_result = successful[-1] if successful else (
-            list(results.values())[-1] if results else {}
+            list(relevant.values())[-1] if relevant else {}
         )
         return {
             "status": status,
@@ -216,33 +265,77 @@ class WorkflowExecutor:
         agents = {}
         for call in calls:
             agent_id = call.function.name
-            if agent_id not in agents:
-                agents[agent_id] = self.runtime.get_agent(agent_id)
-            workflow_inputs = {
-                ref: self._resolve_ref(ref, results)
-                for ref in call.function.arguments.get("input_refs", [])
-            }
-            run_context = dict(base_context)
-            run_context.update({
-                "workflow_inputs": workflow_inputs,
-                "workflow": {
-                    "trace_id": trace_id,
+            try:
+                if agent_id not in agents:
+                    agents[agent_id] = self.runtime.get_agent(agent_id)
+                if agents[agent_id] is None:
+                    raise RuntimeError(f"Agent '{agent_id}' is not available")
+                workflow_inputs = {
+                    ref: self._resolve_ref(ref, results)
+                    for ref in call.function.arguments.get("input_refs", [])
+                }
+                run_context = dict(base_context)
+                run_context.update({
+                    "workflow_inputs": workflow_inputs,
+                    "workflow": {
+                        "trace_id": trace_id,
+                        "call_id": call.call_id,
+                        "intent": call.intent,
+                        "depends_on": list(call.depends_on),
+                        "original_query": original_query,
+                    },
+                })
+                if call.depends_on:
+                    run_context["previous_result"] = results[call.depends_on[-1]]
+
+                if context_provider is not None:
+                    provided = context_provider(call, results)
+                    if not isinstance(provided, dict):
+                        raise TypeError("context_provider must return a dict")
+                    run_context.update(provided)
+            except Exception as exc:
+                error_result = {
+                    "status": "error",
+                    "answer": "该步骤暂不可执行，已自动跳过。",
+                    "summary": "步骤不可执行，已自动跳过",
+                    "data": {},
+                    "metadata": {
+                        "agent_id": agent_id,
+                        "call_id": call.call_id,
+                        "error_type": "preparation_error",
+                        "error": str(exc)[:200],
+                    },
+                }
+                results[call.call_id] = error_result
+                trace.append({
                     "call_id": call.call_id,
+                    "agent_id": agent_id,
                     "intent": call.intent,
-                    "depends_on": list(call.depends_on),
-                    "original_query": original_query,
-                },
-            })
-            if call.depends_on:
-                run_context["previous_result"] = results[call.depends_on[-1]]
-
-            if context_provider is not None:
-                provided = context_provider(call, results)
-                if not isinstance(provided, dict):
-                    raise TypeError("context_provider must return a dict")
-                run_context.update(provided)
-
+                    "status": "error",
+                    "latency_ms": 0.0,
+                    "attempt": 0,
+                    "retry": False,
+                    "fallback": True,
+                })
+                if on_stage is not None:
+                    on_stage("step_start", {
+                        "call_id": call.call_id,
+                        "agent_id": agent_id,
+                        "intent": call.intent,
+                        "instruction": call.function.arguments["instruction"],
+                    })
+                    on_stage("step_end", {
+                        "call_id": call.call_id,
+                        "agent_id": agent_id,
+                        "intent": call.intent,
+                        "status": "error",
+                        "summary": "步骤不可执行，已自动跳过",
+                    })
+                continue
             prepared.append((call, agents[agent_id], run_context))
+
+        if not prepared:
+            return
 
         groups = {}
         for call, agent, run_context in prepared:
@@ -269,10 +362,25 @@ class WorkflowExecutor:
                 )
                 for agent_id, items in groups.items()
             }
-            group_results = {
-                agent_id: future.result()
-                for agent_id, future in futures.items()
-            }
+            group_results = {}
+            for agent_id, future in futures.items():
+                try:
+                    group_results[agent_id] = future.result()
+                except Exception as exc:
+                    group_results[agent_id] = [
+                        {
+                            "status": "error",
+                            "answer": "该步骤执行异常，已自动跳过。",
+                            "summary": "agent execution failed",
+                            "data": {},
+                            "metadata": {
+                                "agent_id": agent_id,
+                                "error_type": "batch_error",
+                                "error": str(exc)[:200],
+                            },
+                        }
+                        for _ in groups[agent_id]
+                    ]
             for call, _, _ in prepared:
                 result, entry = group_results[call.function.name].pop(0)
                 results[call.call_id] = result

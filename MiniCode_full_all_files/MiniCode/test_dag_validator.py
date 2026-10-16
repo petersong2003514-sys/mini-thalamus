@@ -196,5 +196,21 @@ class DAGValidatorTests(unittest.TestCase):
         self.assertEqual(len(ctx.exception.attempts), 3)
 
 
+
+    def test_rejects_unresolved_placeholder_in_instruction(self):
+        plan = valid_plan()
+        plan.dag[0] = WorkflowPlanStep(
+            "step_1",
+            "nl2sql",
+            "database_query",
+            [],
+            [],
+            "find tallest building in {city}",
+        )
+        with self.assertRaises(DAGValidationError) as ctx:
+            self.validator.validate(plan)
+        self.assertIn("unresolved placeholder", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

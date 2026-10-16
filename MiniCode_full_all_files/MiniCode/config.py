@@ -88,6 +88,13 @@ ROUTER_SEMANTIC_FALLBACK_THRESHOLD = float(
 )
 ROUTER_TOP_K = int(os.environ.get("SHUSHU_ROUTER_TOP_K", "3"))
 
+# ─── 运行时重规划(MAO)与自我评估 ───
+# 步骤失败/假成功时,基于已完成中间结果重写下游 DAG(WorkflowExecutor replan 钩子)。
+REPLAN_ENABLED = os.getenv("SHUSHU_REPLAN_ENABLED", "true").lower() == "true"
+REPLAN_MAX = int(os.getenv("SHUSHU_REPLAN_MAX", "2"))
+# 每步成功后用 SelfEvaluator 判断"技术成功但目标未完成"(关键词信号优先,LLM 只判模糊地带)。
+SELF_EVAL_ENABLED = os.getenv("SHUSHU_SELF_EVAL", "true").lower() == "true"
+
 # ─── 子 Agent 路径 ───
 NL2SQL_PROJECT = os.path.join(os.path.dirname(__file__), "..", "nl2sql_agent")
 RAG_PROJECT = os.path.join(os.path.dirname(__file__), "..", "RAG学习", "DeepRAG-Internal")

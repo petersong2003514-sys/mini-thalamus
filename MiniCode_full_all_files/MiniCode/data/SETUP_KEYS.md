@@ -29,3 +29,10 @@ $env:SHUSHU_SEARCH_API_KEY="你的key"
 ```powershell
 $env:EASYOCR_MODULE_PATH="D:/easyocr_models"
 ```
+
+## 5. WebSearch 自动降级
+
+默认顺序：Tavily → Serper → Bocha → SearXNG → Bing。
+- `SHUSHU_SEARCH_ENGINE` 可写多个，如 `tavily,serper`；不写也按默认顺序尝试有 key 的 provider。
+- 每个 provider 可用独立 key：`TAVILY_API_KEY`、`SERPER_API_KEY`、`BOCHA_API_KEY`；没有独立 key 时用 `SHUSHU_SEARCH_API_KEY`。
+- Tavily 额度用尽或报错时会自动尝试下一个，全部失败再走 Bing。

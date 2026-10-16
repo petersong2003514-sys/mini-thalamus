@@ -29,6 +29,13 @@ CONTENT_MAX_CHARS = 3000  # 单页内容截断字数
 TOTAL_TIMEOUT = 30       # 总搜索+抓取超时
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/131.0.0.0"
 
+SEARCH_PROVIDER_CALLS = {"tavily": 0, "serper": 0, "bocha": 0, "searxng": 0}
+
+
+def reset_search_provider_calls():
+    for key in SEARCH_PROVIDER_CALLS:
+        SEARCH_PROVIDER_CALLS[key] = 0
+
 AGENT_META = {
     "name": "WebSearch Agent",
     "id": "websearch",
@@ -136,60 +143,98 @@ class WebSearchAgent:
         """Public search API — wraps _search() for external callers (e.g. DeepResearchAgent)."""
         return self._search(query)
 
+    def _clean_search_query(self, query: str) -> str:
+        """Strip orchestrator workflow markers so only the real task text is searched."""
+        text = (query or "").strip()
+        for marker in ("[Previous workflow result]", "[Resolved workflow inputs]"):
+            idx = text.find(marker)
+            if idx >= 0:
+                text = text[:idx]
+        idx = text.find("[Current task]")
+        if idx >= 0:
+            text = text[idx + len("[Current task]"):]
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:400]
+
     def _search(self, query: str) -> list:
-        """LLM 提取关键词优先搜索；原始 query 做兜底（只取前15字防截断）"""
-        candidates = []
-        seen = set()
-
-        # 优先级: LLM关键词 > 短query > 原始query
-        keywords = self._llm_search_keywords(query)
-        short_query = query[:30].rsplit(" ", 1)[0] if len(query) > 30 else query
-
-        for q in [keywords, short_query, query]:
-            if q and q not in seen:
-                candidates.append(q)
-                seen.add(q)
-
+        """Try stable providers first; only extract LLM keywords for the Bing fallback."""
+        clean_query = self._clean_search_query(query)
         best = []
-        provider_results = self._provider_search(query)
+        provider_results = self._provider_search(clean_query)
         if provider_results:
             print(f"  [WebSearch] provider -> {len(provider_results)}条")
             return provider_results
-        for attempt, q in enumerate(candidates):
+
+        short_query = clean_query[:30].rsplit(" ", 1)[0] if len(clean_query) > 30 else clean_query
+        keywords = self._llm_search_keywords(clean_query)
+        seen = set()
+        labels = ["LLM关键词", "短query", "原始"]
+        attempt = 0
+        for q in [keywords, short_query, clean_query]:
+            if not q or q in seen:
+                continue
+            seen.add(q)
             results = self._bing_search(q)
+            label = labels[attempt] if attempt < len(labels) else "原始"
+            attempt += 1
             if results:
-                label = ["LLM关键词", "短query", "原始"][attempt]
                 print(f"  [WebSearch] {label}='{q[:40]}' → {len(results)}条")
-                # 取第一个有结果的，不用继续退化
                 return results
             print(f"  [WebSearch] '{q[:40]}' → 0条")
         return best
 
+    _PROVIDER_ORDER = ("tavily", "serper", "bocha", "searxng")
+
     def _provider_search(self, query: str) -> list:
-        """Use a configured stable search backend before falling back to Bing."""
-        engine = os.environ.get("SHUSHU_SEARCH_ENGINE", "").strip().lower()
-        api_key = os.environ.get("SHUSHU_SEARCH_API_KEY", "").strip()
-        searxng_url = os.environ.get("SHUSHU_SEARXNG_URL", "").strip().rstrip("/")
-        try:
-            if engine == "searxng" and searxng_url:
-                return self._provider_searxng(query, searxng_url)
-            if engine in {"tavily", "serper", "bocha"}:
-                if not api_key:
-                    return []
-                return getattr(self, "_provider_" + engine)(query, api_key)
-        except Exception as exc:
-            print(f"  [WebSearch] provider {engine or 'searxng'} failed: {exc}")
+        """Try configured providers in order; caller falls back to Bing when empty."""
+        query = self._clean_search_query(query) or query
+        for provider in self._provider_order():
+            try:
+                results = self._call_provider(provider, query)
+            except Exception as exc:
+                print(f"  [WebSearch] provider {provider} failed: {exc}")
+                continue
+            if results:
+                print(f"  [WebSearch] provider {provider} -> {len(results)}条")
+                return results
         return []
 
+    def _provider_order(self) -> list:
+        configured = re.split(
+            r"[,\s;]+",
+            os.environ.get("SHUSHU_SEARCH_ENGINE", "").strip().lower(),
+        )
+        configured = [p for p in configured if p in self._PROVIDER_ORDER]
+        return list(dict.fromkeys(configured + list(self._PROVIDER_ORDER)))
+
+    def _call_provider(self, provider: str, query: str) -> list:
+        if provider == "searxng":
+            url = os.environ.get("SHUSHU_SEARXNG_URL", "").strip().rstrip("/")
+            if not url:
+                return []
+            SEARCH_PROVIDER_CALLS[provider] += 1
+            return self._provider_searxng(query, url)
+        api_key = os.environ.get(provider.upper() + "_API_KEY", "").strip()
+        api_key = api_key or os.environ.get("SHUSHU_SEARCH_API_KEY", "").strip()
+        if not api_key:
+            return []
+        SEARCH_PROVIDER_CALLS[provider] += 1
+        return getattr(self, "_provider_" + provider)(query, api_key)
+
     def _provider_tavily(self, query: str, api_key: str) -> list:
-        payload = json.dumps({"api_key": api_key, "query": query, "max_results": MAX_SEARCH_RESULTS}).encode("utf-8")
+        clean_query = re.sub(r"\s+", " ", query or "").strip()[:300]
+        payload = json.dumps({"api_key": api_key, "query": clean_query, "max_results": MAX_SEARCH_RESULTS}).encode("utf-8")
         req = urllib.request.Request(
             "https://api.tavily.com/search",
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:200] if hasattr(exc, "read") else ""
+            raise RuntimeError(f"Tavily HTTP {exc.code}: {body}") from exc
         return [
             {"title": item.get("title", ""), "url": item.get("url", ""), "snippet": item.get("content", "")}
             for item in data.get("results", [])[:MAX_SEARCH_RESULTS]
@@ -322,6 +367,7 @@ class WebSearchAgent:
                     "role": "system",
                     "content": (
                         "将用户输入转成适合搜索引擎的简短关键词（空格分隔，10字以内）。"
+                        "英文输入保留英文关键词，中文输入转成中文关键词；人名、地名、机构名保留原始拼写。"
                         "去掉'查询''帮我''一下'等废话，保留核心实体和意图。"
                         "例如: '今天北京天气怎么样适合穿什么' → '北京天气 穿衣建议'"
                         "\n只输出关键词，不要解释。"
@@ -359,8 +405,12 @@ class WebSearchAgent:
     # ─── 直接抓取兜底：绕过搜索引擎，构造 URL 直接拉 ───
     def _direct_fetch_fallback(self, query: str) -> dict:
         """Bing 不可用时，根据 query 类型尝试直接抓取已知数据源"""
-        keywords = self._llm_search_keywords(query) or self._simplify_query(query)
-        lowered = (keywords + " " + query).lower()
+        clean_query = self._clean_search_query(query) or query
+        lowered = (" " + clean_query).lower()
+        if not any(w in lowered for w in ["天气", "weather", "气温", "温度"]):
+            return {}
+        keywords = self._llm_search_keywords(clean_query) or self._simplify_query(clean_query)
+        lowered = (keywords + " " + clean_query).lower()
 
         # 天气类 → 尝试 wttr.in（支持多城市）
         if any(w in lowered for w in ["天气", "weather", "气温", "温度"]):
@@ -456,7 +506,9 @@ class WebSearchAgent:
                     "role": "system",
                     "content": (
                         "从搜索结果中选出最可能回答用户问题的 2-3 个网页。"
-                        "如果用户问的是某主题的新闻或动态，相关政策、行业、企业动态也算相关，不要只看标题关键词。"
+                        "优先选择包含问题中核心实体、专有名词、数字或年份的页面；Wikipedia、官方站、教育/政府域名优先。"
+                        "如果候选明显不相关（如应用商店、字典页、无关娱乐八卦），宁可少选也不要硬选。"
+                        "不要只看标题关键词，要结合摘要判断是否真正回答问题。"
                         "只输出数字编号，空格分隔，如: 1 3 5"
                         "\n不要输出任何其他内容。"
                     )
@@ -478,27 +530,67 @@ class WebSearchAgent:
 
     # ─── 网页抓取 ───
     def _fetch_page(self, url: str) -> str:
-        """改用共享的 tools.url_fetcher.fetch_url。
+        """改用共享的 tools.url_fetcher.fetch_url，失败时换 UA 重试。
 
         FEATURE_PLAN.md §3 / Audit R6：
-        - allow_private_ips=True 是兼容老 localhost 抓取场景，
-          以及个别工作流里直连 wttr.in 等公共服务时的稳健性兜底。
-          UrlFetchAgent / /api/fetch 走默认 False，不放开 SSRF。
-        - mode='readability' 直接返回正文文本，省掉本地再做 _extract_text。
+        - allow_private_ips=False，防止 SSRF。
+        - 首轮失败后换 Googlebot UA + Accept-Language 再试一次。
+        - 设置 SHUSHU_WEB_FETCH_BROWSER=1 时，可再用无头 Chromium 兜底。
         """
+        attempts = [
+            None,
+            {
+                "User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        ]
+        for headers in attempts:
+            try:
+                r = _shared_fetch_url(
+                    url,
+                    mode="readability",
+                    max_chars=CONTENT_MAX_CHARS,
+                    timeout=FETCH_TIMEOUT,
+                    allow_private_ips=False,
+                    verify_ssl=True,
+                    headers=headers,
+                )
+                if r.get("status") == "success":
+                    content = r.get("content", "")
+                    if isinstance(content, str) and content:
+                        return content[:CONTENT_MAX_CHARS]
+            except Exception:
+                pass
+        if os.environ.get("SHUSHU_WEB_FETCH_BROWSER", "").strip().lower() in {"1", "true", "yes"}:
+            return self._browser_fetch_text(url)
+        return ""
+
+    def _browser_fetch_text(self, url: str) -> str:
         try:
-            r = _shared_fetch_url(
-                url,
-                mode="readability",
-                max_chars=CONTENT_MAX_CHARS,
-                timeout=FETCH_TIMEOUT,
-                allow_private_ips=False,
-                verify_ssl=True,
-            )
-            if r.get("status") != "success":
-                return ""
-            content = r.get("content", "")
-            return content if isinstance(content, str) else ""
+            from playwright.sync_api import sync_playwright
+            executable = os.environ.get("SHUSHU_CHROMIUM_PATH", "")
+            if not executable:
+                import glob as _glob
+                for root in (
+                    os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
+                    os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright"),
+                ):
+                    if not root:
+                        continue
+                    matches = _glob.glob(os.path.join(root, "chromium-*", "chrome-win64", "chrome.exe"))
+                    if matches:
+                        executable = matches[0]
+                        break
+            launch_kwargs = {"headless": True}
+            if executable:
+                launch_kwargs["executable_path"] = executable
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(**launch_kwargs)
+                page = browser.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=FETCH_TIMEOUT * 1000)
+                text = page.inner_text("body")
+                browser.close()
+            return (text or "")[:CONTENT_MAX_CHARS]
         except Exception:
             return ""
 
@@ -514,6 +606,7 @@ class WebSearchAgent:
     def _generate_answer(self, query: str, sources: list) -> dict:
         from structured_output import build_prompt_instruction, parse_llm_output
 
+        query = self._clean_search_query(query) or query
         context_parts = []
         for i, src in enumerate(sources, 1):
             context_parts.append(f"[{i}] {src['title']}\n来源: {src['url']}\n内容: {src['content']}")
@@ -533,7 +626,7 @@ class WebSearchAgent:
             resp = self.client.chat.completions.create(
                 model=LLM_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": "你是联网搜索助手。基于搜索结果回答，输出 JSON。判断相关性以用户问题中的主题词为准；相关主题的政策、行业、企业、技术动态都应纳入回答，只有结果确实与问题完全无关时才说明未找到。"},
+                    {"role": "system", "content": "你是联网搜索助手。基于搜索结果回答，输出 JSON。英文问题必须整段用英文回答，不要混入中文。最终答案单独成行，只包含答案本身（数字、年份、书名、人名等），后面不要紧跟括号、年份或补充解释。关键数字单独呈现，不要附加单位或中文字符（如 7 而不是 7场）。人名、地名、机构名保留原始英文拼写。判断相关性以用户问题中的主题词为准；只有结果确实与问题完全无关时才说明未找到。"},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1, max_tokens=max_tokens_for(query, "answer"),

@@ -3,7 +3,15 @@
 import os
 
 from base_agent import BaseAgent
-from config import ALLOW_LOCAL_EXECUTION, AUTO_APPROVE, ROUTER_AGENTS, SANDBOX_USE_DOCKER
+from config import (
+    ALLOW_LOCAL_EXECUTION,
+    AUTO_APPROVE,
+    REPLAN_ENABLED,
+    REPLAN_MAX,
+    ROUTER_AGENTS,
+    SANDBOX_USE_DOCKER,
+    SELF_EVAL_ENABLED,
+)
 from route_schema import RouteDecision
 from router import Router
 from sandbox import ExecutionPolicy
@@ -183,17 +191,55 @@ class Orchestrator:
                     "session_state": self.memory_service.session_state(sid),
                 }
 
-            execution = self.workflow_executor.execute(
-                decision,
-                original_query=user_message,
-                context={
+            execution_error = None
+            try:
+                execution = self.workflow_executor.execute(
+                    decision,
+                    original_query=user_message,
+                    context={
+                        "session_id": sid,
+                        "files": uploaded_files or file_names,
+                    },
+                    approved_call_ids=approved_call_ids,
+                    context_provider=context_provider,
+                    on_stage=on_stage,
+                    replan_fn=self._make_replan_fn(),
+                )
+            except Exception as exc:
+                execution = None
+                execution_error = exc
+            if execution is None or execution.get("status") == "error":
+                answer = self._general_reply(user_message, session)
+                fallback_reason = (
+                    str(execution_error)[:300]
+                    if execution_error is not None
+                    else str(execution.get("summary", ""))[:300]
+                )
+                self.memory_service.complete_turn(
+                    session,
+                    turn.turn_id,
+                    answer=answer,
+                    agent_id=FALLBACK_AGENT,
+                    status="fallback",
+                    result={
+                        "summary": answer[:300],
+                        "error": fallback_reason,
+                    },
+                )
+                return {
+                    "status": "fallback",
+                    "answer": answer,
+                    "agent_used": FALLBACK_AGENT,
+                    "trace": [
+                        route_trace,
+                        {
+                            "step": "fallback",
+                            "reason": fallback_reason or "workflow execution failed",
+                        },
+                    ],
                     "session_id": sid,
-                    "files": uploaded_files or file_names,
-                },
-                approved_call_ids=approved_call_ids,
-                context_provider=context_provider,
-                on_stage=on_stage,
-            )
+                    "route_decision": decision.to_dict(),
+                }
             execution_trace = [route_trace, *execution.get("trace", [])]
             if execution["status"] == "checkpoint":
                 pending_agent = execution["pending_call"]["function"]["name"]
@@ -275,6 +321,112 @@ class Orchestrator:
             if entry:
                 spec = entry.get("meta", {})
         return evaluator(route_call, spec)
+
+    def _make_replan_fn(self):
+        """构造运行时重规划回调: 失败/假成功 → 重写下游 DAG(MAO)。
+
+        - 收集本批失败(error/blocked)与"假成功"(SelfEvaluator 判未达目标)步骤;
+        - 用 MetaReasoner 为失败步骤补充替代 Agent 建议;
+        - Replanner 复用 Router.plan_workflow + DAGValidator 重生成剩余 DAG;
+        - 对新决策重新 apply_policy(保证审批检查点不因重规划被绕过)。
+        """
+        if not REPLAN_ENABLED:
+            return None
+        if getattr(self, "_replan_ctx", None) is None:
+            from config import get_llm_config
+            from meta_reasoner import MetaReasoner
+            from replanner import Replanner
+            from self_eval import SelfEvaluator
+
+            self._replan_ctx = {
+                "replanner": Replanner(router=self.router),
+                "reasoner": MetaReasoner(get_llm_config()),
+                "evaluator": (
+                    SelfEvaluator(get_llm_config())
+                    if SELF_EVAL_ENABLED
+                    else None
+                ),
+            }
+
+        replanner = self._replan_ctx["replanner"]
+        reasoner = self._replan_ctx["reasoner"]
+        evaluator = self._replan_ctx["evaluator"]
+
+        def available_agents() -> list:
+            agent_ids = []
+            if self.registry is not None:
+                try:
+                    agent_ids = list(self.registry.list_all() or {})
+                except Exception:
+                    agent_ids = []
+            agent_ids += [aid for aid in self.agents if aid not in agent_ids]
+            return agent_ids or list(ROUTER_AGENTS)
+
+        def replan_fn(info: dict):
+            if info.get("attempt", 0) >= REPLAN_MAX:
+                return None
+            results = info["results"]
+            decision = info["decision"]
+            original = info["original_query"]
+            by_id = {call.call_id: call for call in decision.calls}
+            failures: dict = {}
+            for call_id in info.get("batch_call_ids", []):
+                result = results.get(call_id) or {}
+                status = result.get("status")
+                if status in ("error", "blocked"):
+                    failures[call_id] = {
+                        "status": status,
+                        "error": str(
+                            result.get("answer")
+                            or result.get("summary")
+                            or ""
+                        )[:400],
+                    }
+            if evaluator is not None:
+                for call_id in info.get("batch_call_ids", []):
+                    result = results.get(call_id) or {}
+                    if result.get("status") != "success":
+                        continue
+                    call = by_id.get(call_id)
+                    agent_name = call.function.name if call else "?"
+                    evaluation = evaluator.evaluate(
+                        agent_name, original, result
+                    )
+                    if not evaluation.get("passed"):
+                        failures[call_id] = {
+                            "status": "semantic_failure",
+                            "error": str(evaluation.get("reason"))[:200],
+                        }
+            if not failures:
+                return None
+            agents = available_agents()
+            for call_id, failure in failures.items():
+                call = by_id.get(call_id)
+                if call is None:
+                    continue
+                alternative = reasoner.suggest_alternative(
+                    failure.get("error", ""),
+                    call.function.name,
+                    agents,
+                    original,
+                )
+                if alternative:
+                    failure["suggested_alternative"] = alternative
+            new_decision = replanner.replan(
+                original_query=original,
+                results=results,
+                failures=failures,
+                attempt=info.get("attempt", 0),
+            )
+            if new_decision is None:
+                return None
+            try:
+                new_decision.apply_policy(self._resolve_policy)
+            except Exception:
+                return None
+            return new_decision
+
+        return replan_fn
 
     def _build_run_context(
         self,

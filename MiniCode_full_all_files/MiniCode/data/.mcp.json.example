@@ -3,7 +3,7 @@
     "filesystem": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "<your-workspace>"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "<path-to-your-workspace>"],
       "env": {}
     }
   }

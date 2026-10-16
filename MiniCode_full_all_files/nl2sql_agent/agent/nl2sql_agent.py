@@ -58,6 +58,10 @@ from nl2sql_agent.schemas import (
     SQLResult, ValidationResult, StopJudgment,
     Difficulty, StopReason, ErrorType,
 )
+from nl2sql_agent.core.semantic_postcondition import (
+    PostconditionResult,
+    SemanticPostconditionChecker,
+)
 from nl2sql_agent.agent.prompts import safe_format, COT_CORRECTION_PROMPT, CORRECTION_PROMPT
 
 
@@ -88,6 +92,7 @@ class NL2SQLAgent:
         stop_judge=None,              # IStopJudge | None
         light_llm=None,               # 轻量 LLM（用于分类/校验/停止判断）
         task_decomposer=None,         # ITaskDecomposer | None
+        semantic_postcondition=None,  # 语义后置条件检查器（None=禁用；默认规则版）
         max_rounds: int = MAX_ROUNDS,
     ):
         self.schema_provider = schema_provider
@@ -101,6 +106,13 @@ class NL2SQLAgent:
         self.light_llm = light_llm or llm
         self.max_rounds = max_rounds
         self.task_decomposer = task_decomposer
+        # 语义后置条件：None=默认开启（规则版）；False=显式禁用；对象=自定义
+        if semantic_postcondition is False:
+            self.semantic_postcondition = None
+        elif semantic_postcondition is None:
+            self.semantic_postcondition = SemanticPostconditionChecker()
+        else:
+            self.semantic_postcondition = semantic_postcondition
 
         # Token 计数
         self._total_tokens = 0
@@ -208,6 +220,7 @@ class NL2SQLAgent:
         prev_sql = None
         prev_error_type = None
         stop_reason = StopReason.SUCCESS
+        semantic_violation = False   # 是否出现"能跑但语义不合"的结果
 
         for round_idx in range(1, self.max_rounds + 1):
             round_trace = RoundTrace(round_idx=round_idx)
@@ -250,6 +263,19 @@ class NL2SQLAgent:
             round_trace.result = result
 
             if result.success:
+                # ── 语义后置条件（"能跑 ≠ 正确"）──
+                spc = self._check_semantic_postcondition(question, sql, result)
+                if spc is not None and not spc.ok:
+                    semantic_violation = True
+                    round_trace.semantic_postcondition = spc.reason
+                    messages = self._append_semantic_feedback(
+                        messages, sql, spc.reason
+                    )
+                    prev_sql = sql
+                    prev_error_type = ErrorType.OTHER
+                    trace.append(round_trace)
+                    continue
+
                 # ── 执行成功 → 质量检查 ──
                 quality_ok, warning = self._check_result_quality(result, question)
 
@@ -303,8 +329,14 @@ class NL2SQLAgent:
         else:
             # 循环结束仍未成功（MAX_ROUNDS）
             stop_reason = StopReason.MAX_ROUNDS
-            final_result = trace[-1].result if trace else None
-            final_sql = trace[-1].sql if trace else ""
+            if semantic_violation:
+                # 最后几轮全被语义后置条件拦下：执行"成功"但结果不符意图，
+                # 不能当作成功返回 → 置为失败，交给 Plan-Execute / 错误路径。
+                final_result = None
+                final_sql = trace[-1].sql if trace else ""
+            else:
+                final_result = trace[-1].result if trace else None
+                final_sql = trace[-1].sql if trace else ""
 
         # ── 兜底: 任务拆解 (Plan-Execute) ──
         # "auto": 失败即拆解
@@ -741,6 +773,33 @@ class NL2SQLAgent:
             f"请根据建议修正 SQL，只输出修正后的 SQL。"
         )
         messages.append({"role": "assistant", "content": f"```sql\n{sql}\n```"})
+        messages.append({"role": "user", "content": feedback})
+        return messages
+
+    # ═══════════════════════════════════════════════════════════
+    #  语义后置条件（"能跑 ≠ 正确"）
+    # ═══════════════════════════════════════════════════════════
+
+    def _check_semantic_postcondition(
+        self, question: str, sql: str, result,
+    ) -> PostconditionResult | None:
+        """SQL 执行成功后，检查结果是否符合查询的语义意图。
+
+        返回 PostconditionResult；未启用检查器（None）时返回 None 跳过。
+        """
+        if self.semantic_postcondition is None:
+            return None
+        return self.semantic_postcondition.check(question, sql, result)
+
+    def _append_semantic_feedback(
+        self, messages: list[dict], sql: str, reason: str,
+    ) -> list[dict]:
+        """将语义后置条件违规喂回模型，触发修正轮（预算内收敛）。"""
+        messages.append({"role": "assistant", "content": f"```sql\n{sql}\n```"})
+        feedback = (
+            f"SQL 执行成功，但结果不满足查询的语义要求。{reason}\n"
+            f"请根据这条语义后置条件修正 SQL，只输出修正后的 SQL。"
+        )
         messages.append({"role": "user", "content": feedback})
         return messages
 

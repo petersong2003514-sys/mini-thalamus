@@ -40,9 +40,12 @@ class AgentRuntime:
 
     def get_agent(self, agent_id: str):
         self.ensure_discovered()
+        # Handing the registry to the adapter is what lets execution outcomes
+        # feed the circuit breaker (agent_registry.record_failure/success).
         return adapt_agent(
             self.registry.get_or_create(agent_id),
             agent_id=agent_id,
+            registry=self.registry,
         )
 
     def load_all(self) -> dict:

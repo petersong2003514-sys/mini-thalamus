@@ -403,6 +403,13 @@ class WorkflowPlanner:
             "You are the ShuShu Workflow Planner. Split the request into atomic "
             "single-intent steps, select only registered Agents, and return JSON "
             "matching the supplied schema. This is a draft: do not invent Agents.\n"
+            "Each dag step instruction must be self-contained and directly searchable. "
+            "Never leave placeholders such as {city}, [birthplace], or 'the identified X'. "
+            "When a step depends on an earlier step, write the concrete value from that "
+            "earlier step into the instruction (for example 'Find the tallest building in "
+            "Bangkok' instead of 'Find the tallest building in the city identified in "
+            "step_1'). Do not invent words not supported by the user request or an "
+            "earlier confirmed value.\n"
             f"Agent profiles: {json.dumps(candidate_specs, ensure_ascii=False)}\n"
             f"JSON schema: {json.dumps(schema, ensure_ascii=False)}"
         )

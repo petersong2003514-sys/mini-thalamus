@@ -36,6 +36,7 @@ _COMPOUND_PATTERN = re.compile(
     "\u518d(?:\u628a|\u5c06|\u751f\u6210|\u5199|\u753b|\u5206\u6790)|"
     "\u5e76\u4e14|\u540c\u65f6|\u4ee5\u53ca|->|\u2192|;|\uff1b)"
 )
+_ROUTE_PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_]+\}|\[[A-Za-z][A-Za-z0-9_-]*\]")
 
 
 def _is_compound_intent(query: str) -> bool:
@@ -313,6 +314,21 @@ class Router:
                         normalized_candidates.append(item)
                 payload["candidates"] = normalized_candidates
                 for call in payload.get("calls", []) or []:
+                    function = call.get("function", {})
+                    if isinstance(function, dict) and isinstance(
+                        function.get("name"), str
+                    ):
+                        function["name"] = self._resolve_agent_name(
+                            function["name"], specs
+                        )
+                for item in payload.get("candidates", []) or []:
+                    if isinstance(item, dict) and isinstance(
+                        item.get("agent_id"), str
+                    ):
+                        item["agent_id"] = self._resolve_agent_name(
+                            item["agent_id"], specs
+                        )
+                for call in payload.get("calls", []) or []:
                     arguments = call.get("function", {}).get("arguments", {})
                     refs = arguments.get("input_refs", []) or []
                     if isinstance(refs, list):
@@ -322,6 +338,21 @@ class Router:
                             else f"{ref}.answer"
                             for ref in refs
                         ]
+                    if isinstance(call, dict):
+                        function = call.get("function", {}) or {}
+                        if function.get("name") == FALLBACK_AGENT:
+                            raise RouteValidationError(
+                                f"workflow cannot use fallback Agent '{FALLBACK_AGENT}'"
+                            )
+                        instruction = (function.get("arguments", {}) or {}).get(
+                            "instruction", ""
+                        )
+                        if isinstance(instruction, str) and _ROUTE_PLACEHOLDER.search(
+                            instruction
+                        ):
+                            raise RouteValidationError(
+                                "workflow instruction contains unresolved placeholder"
+                            )
                 payload["method"] = "llm"
                 payload["trace_id"] = trace_id
                 if not payload.get("candidates"):
@@ -350,6 +381,16 @@ class Router:
                     error,
                 )
         return None
+
+    @staticmethod
+    def _resolve_agent_name(name: str, specs: dict) -> str:
+        if name in specs:
+            return name
+        compact = re.sub(r"[\s_\-]+", "", name).lower()
+        for spec_id in specs:
+            if re.sub(r"[\s_\-]+", "", spec_id).lower() == compact:
+                return spec_id
+        return name
 
     def _agent_specs(self) -> dict:
         specs = {}
@@ -576,6 +617,8 @@ class Router:
             "call_id 用 step_1、step_2 这类简短 id；"
             "input_refs 必须写成 <call_id>.<export>，例如 step_1.answer，"
             "不能只写裸 call_id；"
+            "workflow 的 calls 不能选 general/fallback，只能选真实可执行 Agent；"
+            "每个 instruction 必须自包含、可直接执行，不能留 {city}、[birthplace] 这类占位符；"
             "candidates 每个元素必须是对象 {agent_id, score, evidence}，"
             "不能是字符串。"
             "只输出符合 JSON Schema 的 JSON，不要 Markdown。\n"

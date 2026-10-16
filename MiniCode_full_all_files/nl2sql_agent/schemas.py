@@ -221,6 +221,7 @@ class RoundTrace:
     validation: Optional[ValidationResult] = None
     error_enhanced: str = ""                       # 增强后的错误信息（难点E）
     stop_judgment: Optional[StopJudgment] = None
+    semantic_postcondition: str = ""               # 语义后置条件违规原因（空=未违规）
 
 
 @dataclass

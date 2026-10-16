@@ -25,10 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
 
-from config import ROUTER_AGENTS, LLM_CONFIG, MAX_STEPS, SKILLS_DIR, MCP_CONFIG_PATH, MCP_AUTO_START, SKILL_AUTO_DISCOVER
+from config import ROUTER_AGENTS, SKILLS_DIR, MCP_CONFIG_PATH, MCP_AUTO_START, SKILL_AUTO_DISCOVER
 from router import Router  # 必须在 Agent 加载前 import，防止 sys.path 污染后拿错 config
-from meta_reasoner import MetaReasoner as _MetaReasoner
-from self_eval import SelfEvaluator as _SelfEvaluator
 from logging_config import setup as _setup_logging, get_logger
 from agent_runtime import get_runtime
 import threading
@@ -36,8 +34,6 @@ import threading
 # 初始化日志（最先执行，后续调试依赖它）
 _setup_logging()
 _log = get_logger("web_server")
-
-FALLBACK_AGENT = next((aid for aid, info in ROUTER_AGENTS.items() if info.get("is_fallback")), "general")
 
 # ─── 动态 Agent 系统（MCP + Skill）───
 _dynamic_cache = {}  # {"skill_loader": ..., "mcp_manager": ..., "started": bool}
@@ -142,41 +138,6 @@ def _filter_history_for_query(query: str, conv_history: str) -> str:
 
     # 模糊地带（1-4 个重叠词）：纯规则兜底——有重叠就保留尾部 2000 字
     return conv_history[-2000:] if overlap else ""
-
-
-def _friendly_error(agent_name: str, error_msg: str) -> str:
-    """将 Agent 异常转换为用户友好的提示"""
-    display = _get_agent_display(agent_name)
-    if "timeout" in error_msg.lower():
-        return f"{display} 响应超时，请稍后重试"
-    if "connection" in error_msg.lower():
-        return f"{display} 连接异常，请检查网络后重试"
-    return f"{display} 处理出错: {error_msg[:100]}"
-
-
-def _get_agent_meta(agent_name: str) -> dict:
-    """从 ROUTER_AGENTS、AgentRegistry 或 agent 实例三处统一查询 meta，确保动态 Agent 也有 name/icon。"""
-    info = ROUTER_AGENTS.get(agent_name)
-    if info:
-        return info
-    registry = _dynamic_cache.get("registry")
-    if registry:
-        entry = registry.get(agent_name)
-        if entry:
-            return entry.get("meta", {})
-    agents = _agents_cache or {}
-    agent = agents.get(agent_name)
-    if agent and hasattr(agent, "capabilities"):
-        return agent.capabilities
-    return {}
-
-
-def _get_agent_display(agent_name: str) -> str:
-    return _get_agent_meta(agent_name).get("name", agent_name)
-
-
-def _get_agent_icon(agent_name: str) -> str:
-    return _get_agent_meta(agent_name).get("icon", "🔧")
 
 
 def _make_mcp_handler(mm, server, tool_name):
@@ -544,25 +505,83 @@ async def list_agents():
     return {"agents": agents_list}
 
 
-# ─── Checkpoint 断点续传 ───
-# 存储暂停的 Agent 链状态: sid → {chain, step, data, query, files, paused_at}
-_paused_chains: dict = {}
-_paused_chains_lock = threading.Lock()
-_MAX_PAUSED_CHAINS = 100  # LRU eviction when exceeded
+@app.post("/api/agents/reload")
+async def reload_agents(agent_id: str = None):
+    """热插拔 Agent：不重启进程完成 新增 / 替换 / 移除。
 
-_PAUSE_TTL = 1800  # 30 分钟超时自动清理
+    不带 agent_id 时对 agents/ 目录做增量重扫——新文件注册、改动过的热替换、
+    已删除的注销，未变动的保留其热实例。带 agent_id 时只热替换那一个。
+
+    任一 Agent 重载失败只会记进 report.errors，不影响其它 Agent，也不影响
+    已经拿到旧实例的在途请求。
+    """
+    global _agents_cache
+    from agent_registry import AgentLoadError
+
+    _ensure_startup()
+    registry = _dynamic_cache.get("registry")
+    if registry is None:
+        return JSONResponse(
+            {"ok": False, "error": "AgentRegistry 未初始化"}, status_code=503
+        )
+
+    try:
+        if agent_id:
+            report = {"reloaded": [registry.reload_agent(agent_id)["agent_id"]],
+                      "errors": {}}
+        else:
+            report = registry.rescan()
+            sl = _dynamic_cache.get("skill_loader")
+            if sl:
+                registry.register_skill_loader(sl)
+    except AgentLoadError as e:
+        # 新版本构建失败：旧版本原样保留，服务继续可用。
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=409)
+
+    with _agents_cache_lock:
+        _agents_cache = None
+        # AGENT_LOADERS 是 import 时取的快照；就地刷新而不是重新赋值，
+        # 这样其它模块已经持有的引用同样能看到新 Agent。
+        AGENT_LOADERS.clear()
+        AGENT_LOADERS.update(get_runtime().loader_registry())
+    _log.info("Agent 热重载完成: %s", report)
+    return {"ok": True, "report": report}
 
 
-def _cleanup_expired_pauses():
-    """清理超时的暂停链"""
-    now = time.time()
-    with _paused_chains_lock:
-        expired = [sid for sid, state in _paused_chains.items()
-                   if now - state.get("paused_at", 0) > _PAUSE_TTL]
-        for sid in expired:
-            del _paused_chains[sid]
-    if expired:
-        _log.info("清理 %d 个超时暂停链", len(expired))
+@app.get("/api/agents/health")
+async def agents_health():
+    """每个 Agent 的熔断状态 —— 熔断/不可用的也要列出来。
+
+    /api/agents 走的是路由候选视图，被熔断的 Agent 已经不在里面了，
+    所以排查时需要这个接口：能看到「谁被熔断了、为什么、多久之后会重试」。
+    """
+    from agent_registry import (
+        CIRCUIT_COOLDOWN_SECONDS,
+        CIRCUIT_FAILURE_THRESHOLD,
+    )
+
+    _ensure_startup()
+    registry = _dynamic_cache.get("registry")
+    if registry is None:
+        return JSONResponse(
+            {"ok": False, "error": "AgentRegistry 未初始化"}, status_code=503
+        )
+
+    healthy, quarantined = {}, {}
+    for agent_id, entry in registry.entries().items():
+        health = dict(entry.get("health") or {})
+        health["status"] = entry.get("status", "")
+        health["error"] = entry.get("error", "")
+        health["serving"] = bool(registry._is_serving(entry))
+        (healthy if health["serving"] else quarantined)[agent_id] = health
+    return {
+        "ok": True,
+        "serving": sorted(healthy),
+        "quarantined": sorted(quarantined),
+        "detail": {**healthy, **quarantined},
+        "threshold": CIRCUIT_FAILURE_THRESHOLD,
+        "cooldown_seconds": CIRCUIT_COOLDOWN_SECONDS,
+    }
 
 
 @app.post("/api/chat/continue")
@@ -575,122 +594,6 @@ async def continue_chain(req: ChatRequest):
         },
         status_code=410,
     )
-    sid = req.session_id
-    with _paused_chains_lock:
-        if not sid or sid not in _paused_chains:
-            return JSONResponse({"answer": "会话已过期，请重新发起请求", "error": "session_expired"}, status_code=200)
-        state = _paused_chains.pop(sid)
-    _log.info("续传开始: sid=%s step=%d chain=%s", sid[:8], state.get("step", 0), state.get("chain", []))
-    if req.chain_id and state.get("chain_id") and req.chain_id != state["chain_id"]:
-        return JSONResponse({"answer": "暂停链已被新的会话覆盖，请重新发起请求", "error": "chain_id_mismatch"}, status_code=200)
-    agent_chain = state["chain"]
-    step_idx = state["step"]          # 已完成的步骤索引
-    edited_data = state.get("data", {})
-    route_data = state.get("route_decision") or {}
-    route_calls = route_data.get("calls", [])
-    workflow_results = dict(state.get("workflow_results", {}))
-
-    # 用编辑后的数据更新 previous_result
-    prev = {
-        "answer": edited_data.get("answer", req.message or ""),
-        "data": edited_data,
-        "status": "edited",
-    }
-    if step_idx < len(route_calls):
-        workflow_results[route_calls[step_idx]["call_id"]] = prev
-
-    # 构建新的 SSE stream，从 step_idx+1 继续
-    async def resume_stream():
-        from agents.docparse_agent import get_session_files
-
-        agents = get_agents()
-        chain = agent_chain
-        current_step = step_idx + 1
-        previous_result = prev
-
-        yield f"data: {json.dumps({'type': 'status', 'text': '继续执行...'}, ensure_ascii=False)}\n\n"
-
-        for idx in range(current_step, len(chain)):
-            agent_name = chain[idx]
-            if agent_name == FALLBACK_AGENT:
-                continue
-            if agent_name not in agents:
-                yield f"data: {json.dumps({'type': 'error', 'text': f'Agent {agent_name} 暂不可用'}, ensure_ascii=False)}\n\n"
-                break
-
-            agent_info = _get_agent_meta(agent_name)
-            agent_display = agent_info.get("name", agent_name)
-            agent_icon = agent_info.get("icon", "🔧")
-            step_label = f"Step {idx+1}/{len(chain)}: {agent_display}" if len(chain) > 1 else agent_display
-            yield f"data: {json.dumps({'type': 'status', 'text': f'{agent_icon} {step_label} 启动中...', 'subtype': 'agent_start', 'agent': agent_name}, ensure_ascii=False)}\n\n"
-
-            try:
-                agent = agents[agent_name]
-                route_call = route_calls[idx] if idx < len(route_calls) else None
-                enhanced = (
-                    route_call["function"]["arguments"]["instruction"]
-                    if route_call
-                    else state["query"]
-                )
-                needs_files = agent_name in ("docparse", "rag")
-                ctx = {"files": state.get("files", []), "session_id": sid} if (needs_files or state.get("files")) else {}
-                ctx.setdefault("session_id", sid)
-                if route_call:
-                    from workflow_executor import WorkflowExecutor
-                    ctx["workflow_inputs"] = {
-                        ref: WorkflowExecutor._resolve_ref(ref, workflow_results)
-                        for ref in route_call["function"]["arguments"].get("input_refs", [])
-                    }
-                    ctx["workflow"] = {
-                        "trace_id": route_data.get("trace_id", ""),
-                        "call_id": route_call["call_id"],
-                        "intent": route_call["intent"],
-                        "depends_on": route_call.get("depends_on", []),
-                        "original_query": state["query"],
-                    }
-                    if route_call.get("depends_on"):
-                        ctx["previous_result"] = workflow_results[route_call["depends_on"][-1]]
-                elif previous_result:
-                    ctx["previous_result"] = previous_result
-                _log.info("Agent 链[%d/%d] 开始执行: %s", idx+1, len(agent_chain), agent_name)
-                result = await asyncio.to_thread(agent.run, enhanced, context=ctx)
-                _log.info("Agent 链[%d/%d] 完成: %s", idx+1, len(agent_chain), agent_name)
-                previous_result = result
-                if route_call:
-                    workflow_results[route_call["call_id"]] = result
-                answer = result.get("answer", "")
-
-                # 不是最后一步 → 发 checkpoint
-                if idx < len(chain) - 1:
-                    # FEATURE_PLAN.md §1 P0.4: resume_stream 也走相同 record_turn + chain_id 规则
-                    memory.record_turn(
-                        sid, state["query"], answer, agent_name,
-                        tags=["chain_step", f"step_{idx+1}_of_{len(chain)}"]
-                    )
-                    cp_label = (_get_agent_display(agent_name) or agent_name) + " 结果"
-                    chain_id = uuid.uuid4().hex
-                    cp_data = {"type": "checkpoint", "step": idx, "step_total": len(chain), "agent": agent_name, "label": cp_label, "data": result.get("data", {}), "answer": answer, "session_id": sid, "editable": True, "chain_id": chain_id}
-                    yield f"data: {json.dumps(cp_data, ensure_ascii=False)}\n\n"
-                    _cleanup_expired_pauses()
-                    with _paused_chains_lock:
-                        # LRU eviction: remove oldest when over limit
-                        if len(_paused_chains) >= _MAX_PAUSED_CHAINS:
-                            oldest = next(iter(_paused_chains))
-                            del _paused_chains[oldest]
-                        _paused_chains[sid] = {"chain": chain, "step": idx, "data": result.get("data", {}), "query": state["query"], "files": state.get("files", []), "paused_at": time.time(), "chain_id": chain_id, "route_decision": route_data or None, "workflow_results": workflow_results}
-                    yield f"data: {json.dumps({'type': 'done', 'session_id': sid}, ensure_ascii=False)}\n\n"
-                    return  # 暂停，等用户继续
-
-                structured_data = result.get("data", {}).get("structured")
-                if structured_data:
-                    yield f"data: {json.dumps({'type': 'structured', 'data': structured_data}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'answer', 'text': answer, 'step': idx+1, 'agent': agent_name}, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'text': _friendly_error(agent_name, str(e)), 'agent': agent_name}, ensure_ascii=False)}\n\n"
-
-        yield f"data: {json.dumps({'type': 'done', 'session_id': sid}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(resume_stream(), media_type="text/event-stream")
 
 
 # ─── Skill 管理接口 ───
@@ -924,6 +827,11 @@ async def crystallize_session(req: ChatRequest, request: Request = None):
                 if sl:
                     sl.discover()
                     sl.register_in_loader_registry(AGENT_LOADERS)
+                    # 同步进 AgentRegistry：Router 的路由候选来自 registry，
+                    # 只写 AGENT_LOADERS 的话新 Skill 能被执行却路由不到。
+                    registry = _dynamic_cache.get("registry")
+                    if registry is not None:
+                        registry.register_skill_loader(sl)
             _log.info("Skill 已固化并重新加载: %s", result.get('skill_id'))
         return result
     except Exception as e:
@@ -1161,6 +1069,12 @@ def _stage_sse(kind, payload):
                 payload.get("instruction", "")[:60],
             ),
         }
+    elif kind == "replan":
+        event = {
+            "type": "status",
+            "subtype": "replan",
+            "text": "⚠️ 部分步骤未达预期，正在重新规划剩余任务...",
+        }
     elif kind == "step_end":
         status = payload.get("status", "")
         text = "[{}] 完成".format(payload.get("agent_id", ""))
@@ -1292,155 +1206,5 @@ async def _chat_stream_impl(message: str, agent: str, session_id: str,
             yield f"data: {json.dumps({'type': 'answer', 'text': result.get('answer', ''), 'agent': result.get('agent_used')}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'session_id': sid}, ensure_ascii=False)}\n\n"
         return
-
-        # 路由决策（Router 已合并多步判断；接入 AgentRegistry —— REPAIR_PLAN #25 #27）
-        if is_manual and chosen_agent in agents:
-            agent_chain = [chosen_agent]
-            _route_instructions = {}
-            route_decision = None
-            route_calls = []
-        else:
-            registry = _dynamic_cache.get("registry")
-            router = Router(registry=registry)
-            file_ctx = {"has_files": True, "file_names": memory.get_files(sid), "session_id": sid} if memory.get_files(sid) else None
-            route_decision = router.route_decision(clean_message, file_context=file_ctx)
-            route = route_decision.to_legacy_dict()
-            agent_chain = route.get("agents", [route.get("agent", FALLBACK_AGENT)])
-            _route_instructions = route.get("instructions", {})
-            route_calls = route_decision.calls
-
-        # 执行 Agent 链
-        previous_result = None
-        workflow_results = {}
-        for idx, agent_name in enumerate(agent_chain):
-            if agent_name == FALLBACK_AGENT or agent_name not in agents:
-                answer = f"收到。关于「{clean_message[:100]}」，您可以尝试更具体地描述需求。"
-                yield f"data: {json.dumps({'type': 'answer', 'text': answer, 'agent': FALLBACK_AGENT}, ensure_ascii=False)}\n\n"
-                memory.record_turn(sid, clean_message, answer, FALLBACK_AGENT)
-                break
-
-            agent = agents[agent_name]
-            agent_info = _get_agent_meta(agent_name)
-            display = agent_info.get("name", agent_name)
-            icon = agent_info.get("icon", "🔧")
-            step_label = f"Step {idx+1}/{len(agent_chain)}: {display}" if len(agent_chain) > 1 else display
-            yield f"data: {json.dumps({'type': 'status', 'text': f'{icon} {step_label} 处理中...', 'agent': agent_name}, ensure_ascii=False)}\n\n"
-
-            try:
-                route_call = route_calls[idx] if idx < len(route_calls) else None
-                if route_call is not None:
-                    query_input = route_call.function.arguments["instruction"]
-                else:
-                    query_input = agent_query
-                ctx = {"files": file_names, "session_id": sid} if file_names else {}
-                ctx.setdefault("session_id", sid)
-                if route_call is not None:
-                    from workflow_executor import WorkflowExecutor
-                    ctx["workflow_inputs"] = {
-                        ref: WorkflowExecutor._resolve_ref(ref, workflow_results)
-                        for ref in route_call.function.arguments.get("input_refs", [])
-                    }
-                    ctx["workflow"] = {
-                        "trace_id": route_decision.trace_id,
-                        "call_id": route_call.call_id,
-                        "intent": route_call.intent,
-                        "depends_on": list(route_call.depends_on),
-                        "original_query": clean_message,
-                    }
-                    if route_call.depends_on:
-                        ctx["previous_result"] = workflow_results[route_call.depends_on[-1]]
-                elif previous_result:
-                    ctx["previous_result"] = previous_result
-                _log.info("Agent 链[%d/%d] %s 开始执行", idx+1, len(agent_chain), agent_name)
-                try:
-                    result = await asyncio.to_thread(agent.run, query_input, context=ctx)
-                except Exception as _e:
-                    _log.exception("Agent 链[%d/%d] %s 执行失败", idx+1, len(agent_chain), agent_name)
-                    raise
-                _log.info("Agent 链[%d/%d] %s 完成", idx+1, len(agent_chain), agent_name)
-                previous_result = result
-                if route_call is not None:
-                    workflow_results[route_call.call_id] = result
-                # 方案A: MetaReasoner —— result["status"]=="error" 时尝试替代 Agent
-                if result.get("status") == "error":
-                    try:
-                        from config import get_llm_config
-                        _mr = _MetaReasoner(get_llm_config())
-                        _alt = _mr.suggest_alternative(
-                            result.get("answer", ""), agent_name,
-                            list(agents.keys()), clean_message,
-                        )
-                        if _alt and _alt in agents:
-                            yield f"data: {json.dumps({'type': 'meta_recovery', 'from': agent_name, 'to': _alt, 'reason': result.get('answer', '')[:100]}, ensure_ascii=False)}\n\n"
-                            agent_name = _alt
-                            agent = agents[_alt]
-                            result = await asyncio.to_thread(agent.run, query_input, context=ctx)
-                            previous_result = result
-                    except Exception:
-                        pass
-                answer = result.get("answer", result.get("summary", "处理完成"))
-                # 方案F: 自我评估 —— 技术成功但实际未完成时触发 MetaReasoner
-                try:
-                    from config import get_llm_config
-                    _ev = _SelfEvaluator(get_llm_config())
-                    _eval = _ev.evaluate(agent_name, clean_message, result)
-                    if not _eval["passed"]:
-                        _mr2 = _MetaReasoner(get_llm_config())
-                        _alt2 = _mr2.suggest_alternative(
-                            _eval["reason"], agent_name, list(agents.keys()), clean_message,
-                        )
-                        if _alt2 and _alt2 in agents:
-                            yield f"data: {json.dumps({'type': 'meta_recovery', 'from': agent_name, 'to': _alt2, 'reason': _eval['reason'][:100], 'source': 'self_eval'}, ensure_ascii=False)}\n\n"
-                            agent_name = _alt2
-                            agent = agents[_alt2]
-                            result = await asyncio.to_thread(agent.run, query_input, context=ctx)
-                            previous_result = result
-                            answer = result.get("answer", result.get("summary", "处理完成"))
-                except Exception:
-                    pass
-
-                # 中间步骤：auto_flow vs pause
-                if idx < len(agent_chain) - 1:
-                    # FEATURE_PLAN.md §1 P0.4: record_turn 保中间步骤进 history
-                    memory.record_turn(
-                        sid, clean_message, answer, agent_name,
-                        tags=["chain_step", f"step_{idx+1}_of_{len(agent_chain)}"]
-                    )
-                    agent_caps = getattr(agent, "capabilities", {}) or {}
-                    auto_chainable = agent_caps.get("auto_chainable", False)
-                    if auto_chainable and not require_confirm:
-                        # auto-flow：不暂停，继续执行下一步
-                        await asyncio.sleep(0)  # 给 abort 一次传播机会
-                        yield f"data: {json.dumps({'type': 'auto_step', 'step': idx+1, 'agent': agent_name, 'answer': answer[:200]}, ensure_ascii=False)}\n\n"
-                    else:
-                        # pause：等待用户确认
-                        chain_id = uuid.uuid4().hex
-                        cp_label = f"Step {idx+1}/{len(agent_chain)}: {display}" if display else agent_name
-                        # 先发 structured 事件
-                        structured_data = result.get("data", {}).get("structured")
-                        if structured_data:
-                            yield f"data: {json.dumps({'type': 'structured', 'data': structured_data}, ensure_ascii=False)}\n\n"
-                        yield f"data: {json.dumps({'type': 'checkpoint', 'step': idx, 'step_total': len(agent_chain), 'agent': agent_name, 'label': cp_label, 'answer': answer[:500], 'data': result.get('data', {}), 'session_id': sid, 'chain_id': chain_id, 'editable': True}, ensure_ascii=False)}\n\n"
-                        with _paused_chains_lock:
-                            # LRU eviction: remove oldest when over limit
-                            if len(_paused_chains) >= _MAX_PAUSED_CHAINS:
-                                oldest = next(iter(_paused_chains))
-                                del _paused_chains[oldest]
-                            _paused_chains[sid] = {"chain": agent_chain, "step": idx, "data": result.get("data", {}), "query": clean_message, "files": file_names, "paused_at": time.time(), "chain_id": chain_id, "route_decision": route_decision.to_dict() if route_decision else None, "workflow_results": workflow_results}
-                        return
-                else:
-                    # 结构化输出：先发 structured 事件，再发 answer
-                    structured_data = result.get("data", {}).get("structured")
-                    if structured_data:
-                        yield f"data: {json.dumps({'type': 'structured', 'data': structured_data}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'type': 'answer', 'text': answer, 'agent': agent_name}, ensure_ascii=False)}\n\n"
-                    memory.record_turn(sid, clean_message, answer, agent_name)
-            except Exception as e:
-                err_msg = _friendly_error(agent_name, str(e))
-                yield f"data: {json.dumps({'type': 'error', 'text': err_msg, 'agent': agent_name}, ensure_ascii=False)}\n\n"
-                memory.record_turn(sid, clean_message, err_msg, agent_name)
-                break
-
-        yield f"data: {json.dumps({'type': 'done', 'session_id': sid}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

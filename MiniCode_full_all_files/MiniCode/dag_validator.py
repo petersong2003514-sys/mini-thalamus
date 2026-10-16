@@ -15,6 +15,9 @@ from workflow_planner import (
 )
 
 
+_PLACEHOLDER_PATTERN = re.compile(r"\{[A-Za-z0-9_]+\}|\[[A-Za-z][A-Za-z0-9_-]*\]")
+
+
 class DAGValidationError(ValueError):
     """A workflow draft failed one or more deterministic checks."""
 
@@ -175,6 +178,8 @@ class DAGValidator:
                 for value in (step.call_id, step.agent, step.intent, step.instruction)
             ):
                 errors.append(f"{path} requires non-empty call_id, agent, intent, instruction")
+            if _PLACEHOLDER_PATTERN.search(step.instruction or ""):
+                errors.append(f"{path}.instruction contains unresolved placeholder")
             if step.call_id in by_id:
                 errors.append(f"duplicate call_id '{step.call_id}'")
             by_id[step.call_id] = step

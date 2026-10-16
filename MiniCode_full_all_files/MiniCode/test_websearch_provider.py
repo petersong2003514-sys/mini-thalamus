@@ -83,5 +83,44 @@ class WebSearchProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["url"], "https://example.com/news")
 
 
+    @patch("agents.websearch_agent.urllib.request.urlopen")
+    def test_tavily_quota_falls_back_to_serper(self, mock_urlopen):
+        payload = json.dumps({
+            "organic": [
+                {"title": "News", "link": "https://example.com/news", "snippet": "Headline"},
+            ]
+        }).encode("utf-8")
+
+        def fake_open(req, *args, **kwargs):
+            url = str(getattr(req, "full_url", ""))
+            if "api.tavily.com" in url:
+                raise RuntimeError("quota exceeded")
+            return FakeResponse(payload)
+
+        mock_urlopen.side_effect = fake_open
+        os.environ["SHUSHU_SEARCH_ENGINE"] = "tavily"
+        os.environ["SHUSHU_SEARCH_API_KEY"] = "test-key"
+        agent = WebSearchAgent.__new__(WebSearchAgent)
+
+        results = agent._provider_search("latest news")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["url"], "https://example.com/news")
+
+
+
+    @patch.object(WebSearchAgent, "_llm_search_keywords", side_effect=AssertionError("keyword call should be skipped"))
+    def test_provider_success_skips_llm_keywords(self, _mock_keywords):
+        agent = WebSearchAgent.__new__(WebSearchAgent)
+        with patch.object(agent, "_provider_search", return_value=[{"url": "https://example.com"}]):
+            results = agent._search("latest news")
+        self.assertEqual(len(results), 1)
+
+    @patch.object(WebSearchAgent, "_llm_search_keywords", side_effect=AssertionError("keyword call should be skipped"))
+    def test_non_weather_direct_fetch_skips_llm_keywords(self, _mock_keywords):
+        agent = WebSearchAgent.__new__(WebSearchAgent)
+        self.assertEqual(agent._direct_fetch_fallback("latest news"), {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -105,6 +105,8 @@ def _rate_limit(host: str) -> None:
 class _TextExtractor(HTMLParser):
     """简易抽正文：跳过 script/style，保留段落分隔。"""
     SKIP_TAGS = {"script", "style", "noscript", "head", "meta", "link", "svg"}
+    VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                 "link", "meta", "param", "source", "track", "wbr"}
     BLOCK_TAGS = {"p", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6",
                   "li", "tr", "pre", "blockquote", "section", "article"}
 
@@ -114,15 +116,17 @@ class _TextExtractor(HTMLParser):
         self._parts: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() in self.SKIP_TAGS:
+        tag = tag.lower()
+        if tag in self.SKIP_TAGS and tag not in self.VOID_TAGS:
             self._skip_depth += 1
-        elif tag.lower() in self.BLOCK_TAGS:
+        elif tag in self.BLOCK_TAGS:
             self._parts.append("\n")
 
     def handle_endtag(self, tag):
-        if tag.lower() in self.SKIP_TAGS and self._skip_depth > 0:
+        tag = tag.lower()
+        if tag in self.SKIP_TAGS and tag not in self.VOID_TAGS and self._skip_depth > 0:
             self._skip_depth -= 1
-        elif tag.lower() in self.BLOCK_TAGS:
+        elif tag in self.BLOCK_TAGS:
             self._parts.append("\n")
 
     def handle_data(self, data):
