@@ -16,7 +16,7 @@ BUDGET = {
 
 @lru_cache(maxsize=512)
 def _assess_cached(query_key: str, hint: str) -> str:
-    """缓存命中以 (query_前80字符, hint) 为键，避免相似 query 重复算（REPAIR_PLAN #16）"""
+    """缓存命中以 (query_前80字符, hint) 为键，避免相似 query 重复算。"""
     if "多份文档" in hint or "多个文件" in hint:
         return "complex" if ("对比" in query_key or "差异" in query_key) else "medium"
     # 长度启发式（用原始长度近似 —— 截断后总长仍单调反映原长度档位）

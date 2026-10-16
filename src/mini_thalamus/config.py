@@ -127,7 +127,6 @@ RAG_PROJECT = os.getenv("MT_RAG_PROJECT", "")
 # 此处的 ROUTER_AGENTS 作为**默认/兜底**字典存在。
 # 真实运行时（web_server / orchestrator / router）会优先调用
 # AgentRegistry.get_router_config()，并把发现到的 Skill/MCP/动态 Agent merge 进来。
-# 见 REPAIR_PLAN.md #23：『ROUTER_AGENTS 改为动态生成』
 _BUILTIN_ROUTER_AGENTS = {
     "nl2sql": {
         "name": "NL2SQL Agent",
@@ -198,8 +197,6 @@ def get_router_agents() -> dict:
 
     返回值与原 ROUTER_AGENTS 字典完全同结构，便于调用方无侵入替换。
     AgentRegistry 不可用或尚未初始化时退化为内置静态字典。
-
-    REPAIR_PLAN.md #23：『AgentRegistry 自动发现』+ 动态生成 ROUTER_AGENTS
     """
     merged = dict(_BUILTIN_ROUTER_AGENTS)
     try:

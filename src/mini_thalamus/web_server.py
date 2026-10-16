@@ -102,7 +102,7 @@ _agents_cache = None
 
 
 def _filter_history_for_query(query: str, conv_history: str) -> str:
-    """纯规则版历史过滤（REPAIR_PLAN #12：去掉同步阻塞 LLM 调用）。
+    """纯规则版历史过滤：不调用 LLM，避免同步阻塞。
 
     模糊地带（1-4 个重叠词）从 LLM yes/no 判断改为规则兜底：
       - 有任意重叠 → 保留（不漏）
@@ -976,7 +976,7 @@ async def _auto_route(
 
 
 # 多步规划已合并到 Router.route()（一次 LLM 调用同时返回单/多步 agents 数组），
-# 旧的 _plan_agent_chain + MULTI_STEP_PROMPT 已删除（REPAIR_PLAN #17）。
+# 旧的 _plan_agent_chain + MULTI_STEP_PROMPT 已随之删除。
 
 
 # ─── SSE 流式对话接口 ───

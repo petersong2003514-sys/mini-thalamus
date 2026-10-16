@@ -150,7 +150,7 @@ class MemoryStore:
         self.set_long_term(key, {"gist": gist, "agent": turn.get("agent"), "ts": turn.get("ts")})
 
     _tag_client = None
-    _tag_cache: dict = {}      # {规则键: tags 列表} 复用相似 query 的 LLM 结果（REPAIR_PLAN #8）
+    _tag_cache: dict = {}      # {规则键: tags 列表} 复用相似 query 的 LLM 结果
     _TAG_CACHE_MAX = 256       # 简单 LRU 上限，超出时按插入顺序裁剪一半
 
     def _get_tag_client(self):
@@ -164,7 +164,7 @@ class MemoryStore:
         return self._tag_client, self._tag_model
 
     def _auto_tag(self, query: str) -> list:
-        """规则优先 + LLM 兜底 + 标签缓存（REPAIR_PLAN #8）"""
+        """规则优先 + LLM 兜底 + 标签缓存。"""
         # 规则提取：中文词 + 英文词
         tags = re.findall(r'[一-鿿]{2,4}', query)
         tags += re.findall(r'[a-zA-Z]{3,}', query.lower())
@@ -277,8 +277,6 @@ class MemoryStore:
 
         as_struct=False（默认，向后兼容）→ 返回拼接好的 prompt 字符串
         as_struct=True → 返回 AgentContext dataclass，供新 Agent 结构化消费
-
-        REPAIR_PLAN #7 #9 #19 #20：统一入口 + 结构化 dict + capabilities 过滤
         """
         caps = capabilities if capabilities is not None else self._get_agent_capabilities(agent_name)
         max_chars = caps.get("max_context_chars", 4000)
