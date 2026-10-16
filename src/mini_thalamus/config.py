@@ -21,7 +21,25 @@ def _load_env_file(path: str) -> None:
                 os.environ[key] = value
 
 
-_load_env_file(os.path.join(PROJECT_ROOT, ".env"))
+def _env_file_candidates() -> list:
+    """Where to look for a .env, most specific first.
+
+    The first file to define a key wins, because _load_env_file never overrides
+    an existing variable. MT_ENV_FILE makes the location explicit; the working
+    directory covers `pip install` (writing into site-packages would be wrong);
+    the package directory keeps the plain checkout working as before.
+    """
+    explicit = os.getenv("MT_ENV_FILE", "")
+    return [
+        explicit,
+        os.path.join(os.getcwd(), ".env"),
+        os.path.join(PROJECT_ROOT, ".env"),
+    ]
+
+
+for _candidate in _env_file_candidates():
+    if _candidate:
+        _load_env_file(_candidate)
 
 
 def _resolve_deepseek_key() -> str:

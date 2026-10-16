@@ -1,0 +1,86 @@
+Mini Thalamus
+Copyright (c) 2026 Peng Shuyan
+
+This product includes software and data developed by third parties. The
+attributions below cover everything that is redistributed inside this
+repository. Benchmark corpora that are *not* committed are listed at the end
+for completeness — they are fetched by the scripts under mini_thalamus/evals/
+and remain under their own licenses.
+
+The MIT license in LICENSE applies to this project's own code. It does not
+replace or alter the terms of any third-party component listed here.
+
+
+================================================================================
+1. Berkeley Function Calling Leaderboard — official checkers (vendored code)
+================================================================================
+
+Location:  src/mini_thalamus/evals/external/bfcl_official/
+
+Source:    BFCL, part of the Gorilla project (UC Berkeley)
+           https://github.com/ShishirPatil/gorilla
+           https://gorilla.cs.berkeley.edu/leaderboard.html
+           Obtained from the `bfcl-eval` distribution on PyPI.
+
+License:   Apache License 2.0
+           http://www.apache.org/licenses/LICENSE-2.0
+
+Modifications: the vendored subtree was renamed on import from `bfcl_eval` to
+`bfcl_official_impl` so it cannot collide with an installed `bfcl-eval`
+package, and only the multi-turn evaluator subset needed by this project's
+harness was taken. The scoring logic itself is unmodified. The subset and the
+rename are scripted in mini_thalamus/evals/vendor_bfcl_multi_turn.py, which
+takes the wheel to vendor from as an argument; the exact upstream version used
+is not recorded in this repository.
+
+A copy of the Apache License 2.0 is available at the URL above. Where the
+Apache License requires that a NOTICE file be carried forward, this file
+serves that purpose.
+
+
+================================================================================
+2. Berkeley Function Calling Leaderboard — v4 evaluation data
+================================================================================
+
+Location:  src/mini_thalamus/evals/external/bfcl_data/
+
+Source:    https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard
+           and the BFCL v4 information mirror `tuandunghcmut/BFCL_v4_information`
+
+License:   Apache License 2.0
+
+Redistributed here so the offline categories can be scored without network
+access. Re-fetch with `python -m mini_thalamus.evals.download_bfcl`.
+
+
+================================================================================
+3. Spider — text-to-SQL benchmark (provenance note only)
+================================================================================
+
+Location:  src/mini_thalamus/evals/external/spider_data/SOURCES.md
+
+Source:    Spider (Yu et al., EMNLP 2018)
+           https://github.com/taoyds/spider
+           https://yale-lily.github.io/spider
+
+License:   Creative Commons Attribution-ShareAlike 4.0 International
+           https://creativecommons.org/licenses/by-sa/4.0/
+
+The Spider questions and databases themselves are NOT committed to this
+repository — the official download link was dead, so SOURCES.md records the
+mirrors the local copy is assembled from. Only that provenance note is
+redistributed. Any copy you build from it stays under CC BY-SA 4.0.
+
+
+================================================================================
+4. Corpora fetched on demand (not redistributed here)
+================================================================================
+
+None of the following ship with this repository. Each is downloaded by the
+script named beside it and remains under the license set by its own authors;
+check that license before redistributing anything you fetch.
+
+  BEIR (nfcorpus, scifact)   mini_thalamus/evals/beir_eval.py
+                             https://github.com/beir-cellar/beir
+  GAIA                       mini_thalamus/evals/download_gaia.py
+                             https://huggingface.co/datasets/gaia-benchmark/GAIA

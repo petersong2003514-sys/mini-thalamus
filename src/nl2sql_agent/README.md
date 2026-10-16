@@ -7,7 +7,10 @@
 ```bash
 pip install openai gradio numpy
 
-cp .env.example .env    # 编辑 .env 填入 API Key
+# 在仓库根目录创建 .env（模板见仓库根的 .env.example），填入 NL2SQL_API_KEY /
+# NL2SQL_BASE_URL / NL2SQL_MODEL。也可以直接写 OPENAI_API_KEY / LLM_MODEL /
+# LLM_BASE_URL —— 加载时会自动映射到 NL2SQL_* 命名空间。
+cp ../../.env.example ../../.env
 
 python data/generate_data.py    # 生成测试数据
 python main.py --question "北京用户买得最多的品类是什么？"

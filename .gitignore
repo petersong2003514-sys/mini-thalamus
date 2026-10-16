@@ -5,6 +5,8 @@
 .env.*
 **/.env
 **/.env.*
+# ...except the template, which documents every supported key.
+!.env.example
 **/credentials.json
 **/credentials.enc
 **/*credentials*backup*

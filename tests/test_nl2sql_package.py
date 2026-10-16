@@ -76,6 +76,50 @@ class NL2SQLPackageTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 factory.create_llm(api_key="", model="test", base_url="")
 
+    def test_default_dotenv_prefers_the_repository_root(self):
+        """One .env at the repo root serves both the host and this sub-package."""
+        factory = importlib.import_module("nl2sql_agent.agent_factory")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "src" / "nl2sql_agent"
+            package.mkdir(parents=True)
+            (root / "pyproject.toml").write_text("", encoding="utf-8")
+            (root / ".env").write_text("NL2SQL_MODEL=from-root\n", encoding="utf-8")
+            (package / ".env").write_text("NL2SQL_MODEL=from-package\n", encoding="utf-8")
+
+            with patch.object(factory, "PROJECT_ROOT", str(package)):
+                candidates = factory._dotenv_candidates()
+
+            self.assertEqual(candidates[0], str(root / ".env"))
+
+            with patch.dict(os.environ, {}, clear=True):
+                with patch.object(factory, "PROJECT_ROOT", str(package)):
+                    factory.load_dotenv()
+                self.assertEqual(os.environ["NL2SQL_MODEL"], "from-root")
+
+    def test_default_dotenv_ignores_the_parent_of_site_packages(self):
+        """Under a real install the grandparent is unrelated; never read it."""
+        factory = importlib.import_module("nl2sql_agent.agent_factory")
+        with tempfile.TemporaryDirectory() as directory:
+            site_packages = Path(directory) / "lib" / "site-packages"
+            package = site_packages / "nl2sql_agent"
+            package.mkdir(parents=True)
+            (Path(directory) / "lib" / ".env").write_text(
+                "NL2SQL_MODEL=should-not-be-read\n",
+                encoding="utf-8",
+            )
+            (package / ".env").write_text("NL2SQL_MODEL=from-package\n", encoding="utf-8")
+
+            with patch.object(factory, "PROJECT_ROOT", str(package)):
+                candidates = factory._dotenv_candidates()
+
+            self.assertEqual(candidates[0], str(package / ".env"))
+
+            with patch.dict(os.environ, {}, clear=True):
+                with patch.object(factory, "PROJECT_ROOT", str(package)):
+                    factory.load_dotenv()
+                self.assertEqual(os.environ["NL2SQL_MODEL"], "from-package")
+
 
 if __name__ == "__main__":
     unittest.main()

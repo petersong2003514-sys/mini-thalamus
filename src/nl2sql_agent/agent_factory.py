@@ -20,9 +20,33 @@ from nl2sql_agent.config import (
 )
 
 
+def _dotenv_candidates():
+    """Where to look for a .env when the caller did not name one.
+
+    Checked in order, and the first file that exists is the one that is read.
+    The repository root comes first so this sub-package shares the single .env
+    the install instructions tell you to create; the package directory is the
+    fallback for anyone using the package on its own.
+
+    The repository root is only considered when a pyproject.toml sits beside
+    it. Under a real install PROJECT_ROOT is inside site-packages, and two
+    levels up is some unrelated directory whose .env must not be picked up.
+    """
+    root = os.path.abspath(os.path.join(PROJECT_ROOT, "..", ".."))
+    candidates = [os.path.join(PROJECT_ROOT, ".env")]
+    if os.path.isfile(os.path.join(root, "pyproject.toml")):
+        candidates.insert(0, os.path.join(root, ".env"))
+    candidates.append(os.path.join(os.getcwd(), ".env"))
+    return candidates
+
+
 def load_dotenv(env_file=None):
-    """Load the package dotenv into the isolated ``NL2SQL_*`` namespace."""
-    env_file = env_file or os.path.join(PROJECT_ROOT, ".env")
+    """Load a dotenv into the isolated ``NL2SQL_*`` namespace."""
+    if env_file is None:
+        env_file = next(
+            (path for path in _dotenv_candidates() if os.path.isfile(path)),
+            os.path.join(PROJECT_ROOT, ".env"),
+        )
     if not os.path.isfile(env_file):
         return
     aliases = {
