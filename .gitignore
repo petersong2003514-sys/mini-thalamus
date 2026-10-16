@@ -27,6 +27,9 @@
 **/.ruff_cache/
 .venv/
 venv/
+# Setuptools output from `pip install -e .` / `pip wheel .`.
+build/
+**/*.egg-info/
 **/logs/
 **/data/sessions/
 **/data/uploads/

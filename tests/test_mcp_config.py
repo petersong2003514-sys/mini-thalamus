@@ -1,0 +1,26 @@
+import os
+import unittest
+
+from mini_thalamus import PACKAGE_ROOT
+
+from mini_thalamus.mcp_client import MCPClientManager
+
+
+class MCPConfigTests(unittest.TestCase):
+    def test_example_config_parses_stdio_server(self):
+        example = os.path.join(PACKAGE_ROOT, "data", ".mcp.json.example")
+        manager = MCPClientManager(example)
+
+        loaded = manager.load_config()
+
+        self.assertTrue(loaded)
+        self.assertIn("filesystem", manager.servers)
+        self.assertEqual(manager.servers["filesystem"].command, "npx")
+
+    def test_missing_config_returns_false(self):
+        manager = MCPClientManager("data/not_exists.json")
+        self.assertFalse(manager.load_config())
+
+
+if __name__ == "__main__":
+    unittest.main()

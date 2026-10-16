@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-thalamus"
+version = "0.1.0"
+description = "A router-first multi-agent platform: a cascaded router dispatches each request to one of fifteen specialist agents, behind a single approval checkpoint."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["multi-agent", "llm", "router", "agents", "fastapi", "orchestration"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Only what the server, the router and the unit tests actually import at module
+# scope. Everything heavy (torch-backed embeddings, OCR, the browser driver) is
+# behind an extra below and is imported lazily at call time.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "pydantic>=2.0",
+    "python-multipart>=0.0.9",
+    "openai>=1.30",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "rank-bm25>=0.2.2",
+    # Small, and both the image paths and one test module import it eagerly.
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+# Spreadsheet / PDF / Office document extraction (the docparse agent).
+docparse = [
+    "openpyxl>=3.1",
+    "PyPDF2>=3.0",
+    "pdfplumber>=0.11",
+    "pypdfium2>=4.0",
+    "PyMuPDF>=1.24",
+    "python-docx>=1.1",
+    "Pillow>=10.0",
+]
+# Local OCR fallback for scanned documents and images (the vision agent).
+# Pulls torch + torchvision, so it is deliberately not a default install.
+vision = ["easyocr>=1.7"]
+# Semantic routing tier and the RAG agent's embedder. Pulls torch.
+semantic = ["sentence-transformers>=2.3", "pyarrow>=14.0"]
+# Headless Chromium for the browser agent and the JS-rendering fetch path.
+browser = ["playwright>=1.40"]
+# Downloading the external benchmark corpora (BFCL, BEIR, Spider, GAIA).
+evals = ["huggingface_hub>=0.20", "pyarrow>=14.0"]
+# Standalone Gradio UI shipped with the nl2sql_agent package.
+nl2sql-ui = ["gradio>=4.0"]
+dev = ["ruff>=0.5"]
+
+[project.scripts]
+mini-thalamus = "mini_thalamus.web_server:main"
+mini-thalamus-cli = "mini_thalamus.main:main"
+mini-thalamus-nl2sql = "nl2sql_agent.main:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mini_thalamus*", "nl2sql_agent*"]
+# evals/external holds vendored third-party benchmark code (BFCL and friends,
+# ~165 MB with its corpora). It is imported through a runtime sys.path insert
+# rather than as an installed package, and the benchmark corpora are fetched
+# separately, so it stays out of the distribution.
+exclude = [
+    "mini_thalamus.evals.external*",
+    "mini_thalamus.archive*",
+    "mini_thalamus.web*",
+    "mini_thalamus.logs*",
+    "mini_thalamus.static*",
+]
+
+[tool.setuptools.package-data]
+mini_thalamus = [
+    "static/**/*",
+    "skills/**/*",
+    "data/*.json",
+    "data/*.md",
+    "data/*.example",
+    "data/api_specs/*.json",
+    "evals/*.jsonl",
+    "evals/*.md",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
