@@ -1,62 +1,78 @@
-# Mini Thalamus
+<div align="center">
 
-[![CI](https://github.com/petersong2003514-sys/mini-thalamus/actions/workflows/ci.yml/badge.svg)](https://github.com/petersong2003514-sys/mini-thalamus/actions/workflows/ci.yml)
+<h1>Mini Thalamus</h1>
 
-**一个以路由为核心的多 Agent 平台。** 用户的每个请求先经过 规则 → 语义 → LLM 三级层叠路由，被分派给 14 个专职 Agent 之一；多意图请求会被拆成 DAG 顺序执行；所有会触碰外部世界的操作都要过同一个审批检查点。
+<p><b>路由优先的多 Agent 平台</b><br/>
+<sub>一个层叠路由器负责分派，一个审批检查点负责放行。</sub></p>
 
-**A router-first multi-agent platform.** Every request goes through a rules → semantic → LLM cascade that dispatches it to one of fourteen specialist agents. Multi-intent requests become a DAG that executes in dependency order, and every operation that touches the outside world passes the same approval checkpoint.
+<p>
+<a href="https://github.com/petersong/mini-thalamus/actions/workflows/ci.yml"><img src="https://github.com/petersong/mini-thalamus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<img src="https://img.shields.io/badge/python-3.10%20%7C%203.12-3776ab?logo=python&logoColor=white" alt="Python 3.10 | 3.12">
+<img src="https://img.shields.io/badge/tests-293%20passing-3fb950" alt="293 tests passing">
+<img src="https://img.shields.io/badge/agents-14-6d28d9" alt="14 agents">
+<img src="https://img.shields.io/badge/license-MIT-3da639" alt="MIT">
+</p>
 
-[中文](#中文) · [English](#english)
+<p>
+<a href="#快速开始">快速开始</a> ·
+<a href="#架构">架构</a> ·
+<a href="#评测">评测</a> ·
+<a href="#目录结构">目录结构</a> ·
+<a href="#自研与-vendored">自研与 vendored</a>
+</p>
+
+<p><sub>English version is folded at the bottom of this page.</sub></p>
+
+</div>
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img src="docs/assets/architecture-light.svg" alt="Mini Thalamus 架构：客户端 → FastAPI → 三级层叠路由 → DAG 编排 → 14 个专职 Agent，共享记忆/工具/技能/注册中心/预算/熔断" width="860">
+</picture>
+</p>
 
 ---
 
-## 中文
-
-### 为什么叫 Thalamus
+## 为什么叫 Thalamus
 
 丘脑是大脑的中继站：它接收来自各处的信号，判断每个信号该交给哪块皮层，并决定什么允许通过。这个项目做的就是同一件事——**一个层叠路由器负责分派，一个审批检查点负责放行。**
 
-### 它是什么
+## 它是什么
 
-- **层叠路由**：规则层（关键词/`@agent` 指令/文件上下文）→ 语义层（不依赖 torch 的默认后端，或可切换 sentence-transformers）→ LLM 层。每一级都有明确的收敛条件，命中即停，不命中才下沉。
+- **层叠路由**：规则层（关键词 / `@agent` 指令 / 文件上下文）→ 语义层（默认后端不依赖 torch，可切换 sentence-transformers）→ LLM 层。每一级都有明确的收敛条件，命中即停，不命中才下沉；**拿不准就弃权**，而不是猜。
 - **14 个专职 Agent**：NL2SQL、RAG、代码沙箱、文档解析、联网搜索、网页抓取、深度研究、数据洞察、报告生成、图像理解、API 调用、浏览器自动化、Shell、通用兜底。
-- **DAG 编排**：多意图请求先规划成有依赖关系的工作流，经 DAG 校验器查环后按拓扑序执行，步骤间用 `input_refs` 传递结构化产物。
-- **共享基础设施**：统一工具注册中心（发现 + schema 校验 + 分级重试）、跨 Agent 会话管理、分层记忆、熔断与降级链、标准化的 Agent 通信协议。
-- **运行时热插拔**：Agent 可在不重启进程的情况下注册、更新、注销（见 [examples/demo_hot_plug.py](examples/demo_hot_plug.py)）。
+- **DAG 编排**：多意图请求先规划成有依赖关系的工作流，经 DAG 校验器查环后按拓扑序执行，步骤间用 `input_refs` 传递结构化产物，失败可重规划。
+- **共享基础设施**：统一工具注册中心（发现 + schema 校验 + 分级重试）、跨 Agent 会话管理、分层记忆、熔断与降级链、标准化 Agent 通信协议。
+- **运行时热插拔**：Agent 可在不重启进程的情况下注册、更新、注销 —— 见 [examples/demo_hot_plug.py](examples/demo_hot_plug.py)。
 - **可选的自我进化**：失败归因 → 生成补丁 → 守卫评测 → 应用或回滚。
 
-### 它不是什么
+## 它不是什么
 
 这不是一个"框架"。它没有试图抽象出一套通用的 Agent 接口去兼容所有人，而是一个把 14 个真实能力接完整、并且**在公开基准上跑出过可复核分数**的完整系统。代价是它有明确的取向（Web 优先、中文优先、多意图优先），不是通用积木。
 
-### 架构
+## 架构
+
+上图是静态结构。下面是一次请求的决策路径——**路由才是这个项目的重点**：
 
 ```mermaid
-flowchart TD
-    U[用户请求 / HTTP · SSE] --> R{层叠路由器}
-
-    R -->|规则层<br/>关键词 · @agent · 文件上下文| D[路由决策]
-    R -->|语义层<br/>向量/词法相似度 + margin 判据| D
-    R -->|LLM 层<br/>前两级未收敛时| D
-
-    D -->|单意图| S[单个 Agent]
-    D -->|多意图| P[WorkflowPlanner] --> V[DAG 校验器<br/>查环 · 校验 input_refs] --> E[WorkflowExecutor<br/>拓扑序执行 · 失败重规划]
-
-    S --> INFRA
-    E --> INFRA
-
-    subgraph INFRA[共享基础设施]
-        direction LR
-        T[工具注册中心] ~~~ M[会话管理 + 分层记忆] ~~~ G[审批检查点] ~~~ C[熔断 + 降级链]
-    end
-
-    INFRA --> A[14 个专职 Agent]
-    A --> O[答案 / 结构化产物 / 报告]
+flowchart LR
+    Q([请求]) --> R1{规则命中?}
+    R1 -->|是 · 非复合意图| A([直接分派<br/>confidence 1.0])
+    R1 -->|否| R2{语义过线<br/>且 margin 足够?}
+    R2 -->|是 · 非复合意图| B([语义分派])
+    R2 -->|否 · 或复合意图| R3["LLM 路由<br/>候选短名单 · 最多 3 次重试"]
+    R3 -->|成功| C{单意图还是多意图?}
+    R3 -->|全部失败| R4([退回最强语义候选])
+    C -->|单| D([1 个 Agent])
+    C -->|多| E([DAG 编排执行])
 ```
+
+两级廉价路由挡在前面：规则层完全不调用 LLM，语义层只在**分数过阈值且与次优拉开足够 margin** 时才敢拍板；复合意图（"先查数据再画图"）从不走捷径，直接进 LLM。LLM 拿到的不是全部 Agent，而是一份已经排过序的候选短名单。
 
 *Agent 的具体名单、关键词和图标在 [config.py](src/mini_thalamus/config.py) 的 `_BUILTIN_ROUTER_AGENTS`；运行时会被 AgentRegistry 发现的 Skill / MCP / 动态 Agent 合并覆盖。*
 
-### 快速开始
+## 快速开始
 
 ```bash
 git clone <repo> && cd mini-thalamus
@@ -127,7 +143,7 @@ CI 在 Ubuntu（3.10 / 3.12）和 Windows（3.12）上各跑一遍，装的是**
 
 要求 Python **3.10+**。
 
-### 评测
+## 评测
 
 跑在**官方 checker 和官方数据**上（vendored 自 `bfcl-eval`，见 [NOTICE](NOTICE)）。以下全部是**单次运行、无 seed、无方差报告**的结果——把这条读进结论里。
 
@@ -148,9 +164,9 @@ CI 在 Ubuntu（3.10 / 3.12）和 Windows（3.12）上各跑一遍，装的是**
 - **多轮（multi-turn）每类只跑了 3 条冒烟**，全量 4 类约 800 条未跑。这三条数字不足以支撑任何结论。
 - **所有数字都是单次运行**：无 seed、方差未测、门限是硬编码的绝对值。当前的自我进化模块默认 `threshold=0.0`，意味着任何正的 delta 都算通过——它在追噪声。这是"扎实化"那一档要修的事，本版本没修。
 
-详细报告：[docs/EVALUATION_REPORT.md](src/mini_thalamus/docs/EVALUATION_REPORT.md)、[EXTERNAL_BENCHMARKS.md](src/mini_thalamus/evals/EXTERNAL_BENCHMARKS.md)。
+详细报告：[docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md)、[docs/EXTERNAL_BENCHMARKS.md](docs/EXTERNAL_BENCHMARKS.md)。
 
-### 目录结构
+## 目录结构
 
 ```
 mini-thalamus/
@@ -171,26 +187,27 @@ mini-thalamus/
 │   └── nl2sql_agent/             # 独立的 NL2SQL 子项目（可单独使用）
 ├── tests/                        # 70 个测试模块 / 293 个用例
 ├── examples/                     # 热插拔演示、Agent 模板
+├── docs/                         # 架构图 + 评测报告
 ├── scripts/check_imports.py      # 全量 import 冒烟检查（CI 用）
 ├── NOTICE                        # 第三方组件归属（必读）
 └── LICENSE                       # MIT
 ```
 
-评测证据在 [src/mini_thalamus/docs/EVALUATION_REPORT.md](src/mini_thalamus/docs/EVALUATION_REPORT.md) 与 [src/mini_thalamus/evals/EXTERNAL_BENCHMARKS.md](src/mini_thalamus/evals/EXTERNAL_BENCHMARKS.md)。包内其余 `*_PLAN.md` / `*_ANALYSIS.md` 是开发过程中的内部记录，不是对外文档。
-
-### 哪些是自研，哪些是 vendored
+## 自研与 vendored
 
 **自研**：全部路由、编排、记忆、注册、沙箱、执行策略、自我进化代码，以及 14 个 Agent 与评测 harness。本项目**没有任何一行代码来自其它 Agent 框架**。
 
 **vendored**（`src/mini_thalamus/evals/external/`）：
 
-- `bfcl_official/` — 伯克利 BFCL 官方 checker，**Apache-2.0**，仅做了 import 改名（`bfcl_eval` → `bfcl_official_impl`）以免与已安装的包冲突。
-- `bfcl_data/` — BFCL v4 官方评测数据，**Apache-2.0**。
-- `spider_data/` — 只有溯源说明；数据本体不随仓库分发，属 **CC BY-SA 4.0**。
+| 目录 | 内容 | 许可 |
+|---|---|---|
+| `bfcl_official/` | 伯克利 BFCL 官方 checker，仅做了 import 改名（`bfcl_eval` → `bfcl_official_impl`）以免与已安装的包冲突 | Apache-2.0 |
+| `bfcl_data/` | BFCL v4 官方评测数据 | Apache-2.0 |
+| `spider_data/` | 只有溯源说明；数据本体不随仓库分发 | CC BY-SA 4.0 |
 
 完整归属声明见 [NOTICE](NOTICE)。
 
-### 参考
+## 参考
 
 > Yu et al. *Spider: A Large-Scale Human-Labeled Dataset for Complex and Cross-Domain Semantic Parsing and Text-to-SQL Task.* EMNLP 2018.
 >
@@ -198,13 +215,14 @@ mini-thalamus/
 >
 > BFCL / Gorilla, UC Berkeley. <https://gorilla.cs.berkeley.edu/leaderboard.html>
 
-### License
+## License
 
 [MIT](LICENSE)。
 
 ---
 
-## English
+<details>
+<summary><b>English</b> &#8212; the same document, in English. Click to expand.</summary>
 
 ### Why "Thalamus"
 
@@ -212,9 +230,9 @@ The thalamus is the brain's relay station: it receives signals from everywhere, 
 
 ### What it is
 
-- **Cascaded routing**: a rules tier (keywords, `@agent` directives, file context) → a semantic tier (dependency-free by default, or sentence-transformers) → an LLM tier. Each tier has an explicit convergence condition; a request that converges stops there, and only an unconverged one falls through.
+- **Cascaded routing**: a rules tier (keywords, `@agent` directives, file context) → a semantic tier (dependency-free by default, or sentence-transformers) → an LLM tier. Each tier has an explicit convergence condition; a request that converges stops there, and only an unconverged one falls through. A tier that is not sure **abstains instead of guessing.**
 - **Fourteen specialist agents**: NL2SQL, RAG, code sandbox, document parsing, web search, URL fetch, deep research, data analysis, report writing, vision, API calling, browser automation, shell, and a general fallback.
-- **DAG orchestration**: a multi-intent request is planned into a dependency graph, cycle-checked, then executed in topological order with structured artifacts passed between steps through `input_refs`.
+- **DAG orchestration**: a multi-intent request is planned into a dependency graph, cycle-checked, then executed in topological order with structured artifacts passed between steps through `input_refs`, and replanned on failure.
 - **Shared infrastructure**: a tool registry (discovery + schema validation + tiered retry), cross-agent session management, tiered memory, circuit breakers with a degradation chain, and a standardised agent protocol.
 - **Runtime hot-swap**: agents can be registered, replaced and unregistered without restarting the process — see [examples/demo_hot_plug.py](examples/demo_hot_plug.py).
 - **Optional self-evolution**: attribute a failure → generate a patch → guard it with an eval → apply or roll back.
@@ -225,28 +243,22 @@ This is not a framework. It does not try to abstract a universal agent interface
 
 ### Architecture
 
+The diagram at the top of this page is the static structure. The decision path a request actually takes — **routing is the point of this project** — is:
+
 ```mermaid
-flowchart TD
-    U[User request / HTTP · SSE] --> R{Cascaded router}
-
-    R -->|rules<br/>keywords · @agent · file context| D[Route decision]
-    R -->|semantic<br/>similarity + margin rule| D
-    R -->|LLM<br/>only if the first two don't converge| D
-
-    D -->|single intent| S[One agent]
-    D -->|multi intent| P[WorkflowPlanner] --> V[DAG validator<br/>cycle check · input_refs] --> E[WorkflowExecutor<br/>topological order · replan on failure]
-
-    S --> INFRA
-    E --> INFRA
-
-    subgraph INFRA[Shared infrastructure]
-        direction LR
-        T[Tool registry] ~~~ M[Sessions + tiered memory] ~~~ G[Approval checkpoint] ~~~ C[Circuit breakers + degradation]
-    end
-
-    INFRA --> A[Fourteen specialist agents]
-    A --> O[Answer / structured artifact / report]
+flowchart LR
+    Q([Request]) --> R1{Rule hit?}
+    R1 -->|yes · single intent| A([Dispatch directly<br/>confidence 1.0])
+    R1 -->|no| R2{Above threshold<br/>and margin?}
+    R2 -->|yes · single intent| B([Semantic dispatch])
+    R2 -->|no · or compound| R3["LLM router<br/>ranked shortlist · 3 retries"]
+    R3 -->|ok| C{Single or multi intent?}
+    R3 -->|all attempts fail| R4([Fall back to best semantic candidate])
+    C -->|single| D([One agent])
+    C -->|multi| E([DAG orchestration])
 ```
+
+Two cheap tiers stand in front. The rules tier makes no LLM call at all; the semantic tier only commits when the top score clears a threshold **and** beats the runner-up by a sufficient margin; compound requests ("query the data, then chart it") never take the shortcut and go straight to the LLM, which receives a ranked shortlist rather than the full roster.
 
 *The agent roster, keywords and icons live in `_BUILTIN_ROUTER_AGENTS` in [config.py](src/mini_thalamus/config.py); at runtime AgentRegistry merges in whatever Skills, MCP servers and dynamic agents it discovers.*
 
@@ -342,7 +354,7 @@ Run against the **official checkers and official datasets** (vendored from `bfcl
 - **The multi-turn categories are 3-case smoke tests.** The full ~800 cases across the four categories have not been run, so those three figures support no conclusion.
 - **Every number is a single run**: no seed, no measured variance, and thresholds hard-coded as absolute values. The self-evolution module currently defaults to `threshold=0.0`, which means any positive delta counts as a pass — it is chasing noise. Fixing that is a separate piece of work and is not in this version.
 
-Full reports: [docs/EVALUATION_REPORT.md](src/mini_thalamus/docs/EVALUATION_REPORT.md), [EXTERNAL_BENCHMARKS.md](src/mini_thalamus/evals/EXTERNAL_BENCHMARKS.md).
+Full reports: [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md), [docs/EXTERNAL_BENCHMARKS.md](docs/EXTERNAL_BENCHMARKS.md).
 
 ### Layout
 
@@ -365,12 +377,11 @@ mini-thalamus/
 │   └── nl2sql_agent/             # standalone NL2SQL sub-project
 ├── tests/                        # 70 test modules / 293 cases
 ├── examples/                     # hot-plug demo, agent template
+├── docs/                         # architecture diagram + evaluation reports
 ├── scripts/check_imports.py      # whole-tree import smoke check (used by CI)
 ├── NOTICE                        # third-party attribution (please read)
 └── LICENSE                       # MIT
 ```
-
-The evaluation evidence lives in [src/mini_thalamus/docs/EVALUATION_REPORT.md](src/mini_thalamus/docs/EVALUATION_REPORT.md) and [src/mini_thalamus/evals/EXTERNAL_BENCHMARKS.md](src/mini_thalamus/evals/EXTERNAL_BENCHMARKS.md). The other `*_PLAN.md` / `*_ANALYSIS.md` files inside the package are working notes from development, not public documentation.
 
 ### What is original, and what is vendored
 
@@ -378,9 +389,11 @@ The evaluation evidence lives in [src/mini_thalamus/docs/EVALUATION_REPORT.md](s
 
 **Vendored** (under `src/mini_thalamus/evals/external/`):
 
-- `bfcl_official/` — Berkeley's official BFCL checkers, **Apache-2.0**, changed only by an import rename (`bfcl_eval` → `bfcl_official_impl`) so it cannot collide with an installed `bfcl-eval`.
-- `bfcl_data/` — the official BFCL v4 evaluation data, **Apache-2.0**.
-- `spider_data/` — a provenance note only; the data itself is not redistributed here and is **CC BY-SA 4.0**.
+| Directory | Contents | License |
+|---|---|---|
+| `bfcl_official/` | Berkeley's official BFCL checkers, changed only by an import rename (`bfcl_eval` → `bfcl_official_impl`) so it cannot collide with an installed `bfcl-eval` | Apache-2.0 |
+| `bfcl_data/` | the official BFCL v4 evaluation data | Apache-2.0 |
+| `spider_data/` | a provenance note only; the data itself is not redistributed here | CC BY-SA 4.0 |
 
 Full attribution in [NOTICE](NOTICE).
 
@@ -395,3 +408,5 @@ Full attribution in [NOTICE](NOTICE).
 ### License
 
 [MIT](LICENSE).
+
+</details>
